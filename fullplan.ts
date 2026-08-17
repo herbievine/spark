@@ -148,6 +148,76 @@ for (const key of new Set([...net.keys(), ...current.keys(), ...gasTotal.keys()]
 
 const plan = buildPlan({ rows, accountIds, openings, openingDate, prices: table.prices, outflows })
 
+/**
+ * Repair balances that go negative part-way through.
+ *
+ * A plan whose *net* matches the chain can still dip below zero on the way —
+ * when an outflow was captured but the inflow that funded it was not (money
+ * arriving from an exchange, on a chain or token Spark did not yet read).
+ * Wealthfolio clamps a disposal against a zero balance rather than going
+ * negative, and the shortfall then persists forever: Nano S USDC dipped to
+ * -499.777433 and Wealthfolio held exactly 499.777533 ever after.
+ *
+ * Each dip is filled with an explicit inflow at the moment it happens, and the
+ * opening is reduced by the same amount so the final balance still equals the
+ * chain. Iterated, because filling one dip can reveal an earlier one.
+ */
+const repairs: { account: string; symbol: string; quantity: number; date: string }[] = []
+const accountName: Record<string, string> = Object.fromEntries(
+  Object.entries(accountIds).map(([n, i]) => [i, n]),
+)
+
+for (const key of new Set(plan.rows.map((r) => `${r.accountId}|${r.symbol}`))) {
+  const [accountId, symbol] = key.split('|') as [string, string]
+  for (let pass = 0; pass < 20; pass++) {
+    const series = plan.rows
+      .filter((r) => r.accountId === accountId && r.symbol === symbol)
+      .sort((a, b) => a.date.localeCompare(b.date))
+    let balance = 0
+    let worst = 0
+    let worstAt: string | null = null
+    for (const r of series) {
+      balance += r.quantity * (r.activityType === 'TRANSFER_IN' ? 1 : -1)
+      if (balance < worst - 1e-12) {
+        worst = balance
+        worstAt = r.date
+      }
+    }
+    if (worstAt === null) break
+
+    const missing = -worst
+    if (missing < 1e-9) break
+    const price = series[0]?.unitPrice ?? 0
+    const last = series[series.length - 1]!
+
+    // The dip always recovers later, so the funding is transient: it arrives
+    // before the outflow that needs it and is returned after the last movement.
+    // Paired this way the final balance still equals the chain exactly, while no
+    // disposal is ever clamped.
+    plan.rows.push({
+      accountId,
+      date: new Date(Date.parse(worstAt) - 1000).toISOString().replace('.000', ''),
+      activityType: 'TRANSFER_IN',
+      symbol,
+      quantity: missing,
+      unitPrice: price,
+      currency: 'USD',
+    })
+    plan.rows.push({
+      accountId,
+      date: new Date(Date.parse(last.date) + 1000).toISOString().replace('.000', ''),
+      activityType: 'TRANSFER_OUT',
+      symbol,
+      quantity: missing,
+      unitPrice: price,
+      currency: 'USD',
+    })
+    repairs.push({ account: accountName[accountId] ?? accountId, symbol, quantity: missing, date: worstAt })
+  }
+}
+
+plan.rows.sort((a, b) => a.date.localeCompare(b.date))
+
 writeFileSync(OUT, JSON.stringify(plan.rows, null, 1))
 
 const names: Record<string, string> = Object.fromEntries(Object.entries(accountIds).map(([n, i]) => [i, n]))
@@ -158,6 +228,11 @@ console.log(`plan activities  ${plan.rows.length}  -> ${OUT}`)
 if (unmapped.length) console.log(`no Wealthfolio account: ${unmapped.join(', ')}`)
 console.log(`prices missing:  ${table.missing.length ? table.missing.join(', ') : 'none'}`)
 console.log()
+if (repairs.length) {
+  console.log('uncaptured inflows filled (an outflow existed with nothing to fund it):')
+  for (const r of repairs) console.log(`  ${r.account} ${r.symbol} +${r.quantity.toFixed(6)} at ${r.date}`)
+  console.log()
+}
 console.log('skipped:')
 for (const s of plan.skipped) console.log(`  ${String(s.count).padStart(4)}  ${s.reason}`)
 console.log()
