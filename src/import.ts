@@ -37,6 +37,8 @@ export const WEALTHFOLIO_SYMBOLS: Record<string, string> = {
   AVAX: 'AVAX-USD', // Avalanche USD
   WAVAX: 'WAVAX-USD', // Wrapped AVAX USD
   WSTETH: 'WSTETH-USD', // Lido wstETH USD
+  EURe: 'EURE-USD', // Monerium EURe USD — the euro Gnosis Pay and Zeal spend
+  GNO: 'GNO-USD', // Gnosis USD
   // Polygon is 'MATIC-USD', which resolves to POL28321 "Polygon (prev. MATIC)".
   // 'POL-USD' resolves to **Polkadot** — the same class of trap as WETH matching
   // "Wetouch Technology Inc.", and it would silently misprice the position.

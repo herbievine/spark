@@ -189,7 +189,14 @@ export const TOKENS: TokenSpec[] = [
   // EURe (Monerium EUR emoney) — the currency Gnosis Pay and Zeal spend, and a
   // genuinely different asset from Circle's EURC. verifyRegistry() caught the
   // earlier mislabelling of this address as EURC.
+  // Monerium migrated EURe to a new contract; the chain reports the original as
+  // "Monerium EUR emoney [OLD]" and this one as the live "Monerium EUR emoney".
+  // Both are held, so both are registered — without the current one the euro
+  // balance Zeal actually spends is invisible.
+  { chainId: 100, symbol: 'EURe', address: '0x420CA0f9B9b604cE0fd9C18EF134C705e5Fa3430' },
   { chainId: 100, symbol: 'EURe', address: '0xcB444e90D8198415266c6a2724b7900fb12FC56E' },
+  // GNO, the Gnosis chain's own governance token.
+  { chainId: 100, symbol: 'GNO', address: '0x9C58BAcC331c9aa871AFD802DB6379a98e80CEdb' },
   // Polygon
   { chainId: 137, symbol: 'USDC', address: '0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359' },
   { chainId: 137, symbol: 'WBTC', address: '0x1BFD67037B42Cf73acF2047067bd4F2C47D9BfD6' },

@@ -77,6 +77,29 @@ export async function resolveSymbols(statePath: string): Promise<ResolveResult> 
     }
   }
 
+  // Second pass: rows whose contract is in the registry but whose stored symbol
+  // is not the registry's. A token registered *after* those rows were captured
+  // keeps the unvetted `SYMBOL?` name it was given at the time, which splits one
+  // holding across two symbols and leaves the vetted half looking like it lost
+  // an inflow. Registering a contract has to reach the rows already stored.
+  const misnamed = db
+    .query<{ chain_id: number; contract: string; symbol: string }, []>(
+      `SELECT DISTINCT chain_id, contract, symbol
+         FROM transfers
+        WHERE contract IS NOT NULL AND symbol NOT LIKE 'UNKNOWN:%'`,
+    )
+    .all()
+
+  for (const row of misnamed) {
+    const known = registry.get(`${row.chain_id}:${row.contract}`)
+    if (!known || known === row.symbol) continue
+    const res = db
+      .prepare('UPDATE transfers SET symbol = ? WHERE chain_id = ? AND contract = ? AND symbol = ?')
+      .run(known, row.chain_id, row.contract, row.symbol)
+    result.rowsUpdated += res.changes
+    result.contractsResolved++
+  }
+
   db.close()
   return result
 }
