@@ -165,8 +165,10 @@ export const TOKENS: TokenSpec[] = [
   { chainId: 100, symbol: 'WSTETH', address: '0x6C76971f98945AE98dD7d4DFcA8711ebea946eA6' },
   { chainId: 100, symbol: 'WBTC', address: '0x8e5bBbb09Ed1ebdE8674Cda39A0c169401db4252' },
   { chainId: 100, symbol: 'USDC', address: '0xDDAfbb505ad214D7b80b1f830fcCc89B60fb7A83' },
-  // Note: 0xcB44…C56E on Gnosis is EURe (Monerium), not EURC — a different asset.
-  // Left out deliberately; verifyRegistry() caught it.
+  // EURe (Monerium EUR emoney) — the currency Gnosis Pay and Zeal spend, and a
+  // genuinely different asset from Circle's EURC. verifyRegistry() caught the
+  // earlier mislabelling of this address as EURC.
+  { chainId: 100, symbol: 'EURe', address: '0xcB444e90D8198415266c6a2724b7900fb12FC56E' },
   // Polygon
   { chainId: 137, symbol: 'USDC', address: '0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359' },
   { chainId: 137, symbol: 'WBTC', address: '0x1BFD67037B42Cf73acF2047067bd4F2C47D9BfD6' },
