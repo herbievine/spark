@@ -75,6 +75,8 @@ export const CHAINS: Chain[] = [
   {
     id: 137,
     name: 'Polygon',
+    // One tokentx request replaces ~1,600 paged log queries here.
+    explorerApi: 'https://polygon.blockscout.com/api',
     // drpc refuses eth_getLogs on its free tier regardless of span, despite an
     // error message that blames the block range.
     logRpc: 'https://polygon.gateway.tenderly.co',
