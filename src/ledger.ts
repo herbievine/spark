@@ -291,11 +291,22 @@ export class Ledger {
       const body = (await res.json()) as { result?: any }
       const rows = Array.isArray(body.result) ? body.result : []
 
+      // The explorer does not return `logIndex`. Defaulting it to 0 made every
+      // leg of a transaction share the primary key (chain, tx, logIndex), so
+      // INSERT OR IGNORE silently kept only the first — losing the other side of
+      // every wrap, swap and multi-leg transfer. Positions within the (stable,
+      // ascending) response give each leg a distinct synthetic index; negatives
+      // keep them clear of real log indices and of the native marker (-1).
+      const seqByTx = new Map<string, number>()
+
       return {
         transfers: rows.map((t: any) => ({
           chainId: chain.id,
           txHash: t.hash,
-          logIndex: Number(t.logIndex ?? 0),
+          logIndex:
+            t.logIndex !== undefined && t.logIndex !== null
+              ? Number(t.logIndex)
+              : -(100 + (seqByTx.set(t.hash, (seqByTx.get(t.hash) ?? 0) + 1).get(t.hash)! - 1)),
           blockNumber: Number(t.blockNumber),
           blockTime: Number(t.timeStamp),
           contract: String(t.contractAddress).toLowerCase(),

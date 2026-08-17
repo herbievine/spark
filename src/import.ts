@@ -32,9 +32,17 @@ export const WEALTHFOLIO_SYMBOLS: Record<string, string> = {
   WBTC: 'WBTC-USD', // Wrapped Bitcoin USD
   XPL: 'XPL-USD', // Plasma USD
   GHO: 'GHO-USD', // GHO USD
+  BNB: 'BNB-USD', // BNB USD
+  XDAI: 'XDAI-USD', // xDAI USD
+  AVAX: 'AVAX-USD', // Avalanche USD
+  WAVAX: 'WAVAX-USD', // Wrapped AVAX USD
+  WSTETH: 'WSTETH-USD', // Lido wstETH USD
+  // Polygon is 'MATIC-USD', which resolves to POL28321 "Polygon (prev. MATIC)".
+  // 'POL-USD' resolves to **Polkadot** — the same class of trap as WETH matching
+  // "Wetouch Technology Inc.", and it would silently misprice the position.
+  POL: 'MATIC-USD',
   // Deliberately NOT mapped:
   //   ARB  — 'ARB-USD' resolves to "ARbit USD", which is not obviously Arbitrum.
-  //   XDAI, POL, BNB, AVAX, WAVAX, WSTETH — unverified against the resolver.
   //   aTokens, PT-*, variableDebt — receipt and debt tokens, not holdings.
 }
 
