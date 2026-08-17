@@ -299,6 +299,42 @@ wrong address is the failure mode with no symptom: `balanceOf` succeeds and
 returns a real number for the wrong asset. This has already caught one — the
 Gnosis address that looks like EURC reports **EURe** (Monerium), a different asset.
 
+## Explorers cannot be taken at their word
+
+History older than a free RPC will serve has to come from a block explorer, and
+every explorer used here has been caught lying in a way that looks like ordinary
+data:
+
+- **A throttled explorer answers HTTP 200** with `result` as a *message string*
+  rather than an array. Read as "no transfers", it is indistinguishable from an
+  address with no activity — and advancing the cursor past it loses the range for
+  good. Base returned 16 transfers for all of history this way, against 116 for
+  2026 alone. A non-array `result` is now retried and then reported as an error,
+  and a failed scan never advances a cursor.
+- **Routescan attributes one transfer to two transaction hashes.** Only one of
+  them contains it. This inflated Nano X's Avalanche USDC by 3,499.77 against a
+  zero on-chain balance.
+- **`/api/v2/.../counters` contradicts itself**, reporting 0 transactions for an
+  address that has 173. Never conclude "no activity" from it.
+- **Base's Blockscout is slow enough to hang a scan** (~25 s per request, then
+  refusals), so explorer requests have a deadline and a whole-history backfill of
+  several addresses may need more than one pass.
+
+`bun run src/index.ts verify-transfers [chainIds]` is the answer to all of it: it
+matches each explorer-derived row against the real `Transfer` logs of its
+transaction, gives it the real log index, and deletes anything the chain does not
+have. A missing receipt counts as "could not check", never as proof — several
+public RPCs are pruned and answer "not found" for transactions that exist, which
+is why Avalanche points at `api.avax.network`.
+
+## Prices before 2025
+
+CoinGecko's free tier refuses any date older than 365 days, so it cannot price a
+history that starts in 2022. `src/yahoo-prices.ts` uses Yahoo instead — the same
+provider Wealthfolio values these assets with, so the cost basis agrees with the
+price Wealthfolio shows for the same day. One request covers every day of a
+symbol.
+
 ## Credentials
 
 Read from the environment, falling back to the macOS Keychain for local dev, so
