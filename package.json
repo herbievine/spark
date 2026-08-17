@@ -1,0 +1,21 @@
+{
+  "name": "spark",
+  "scripts": {
+    "dev": "bun run --hot src/index.ts",
+    "report": "bun run src/index.ts report",
+    "defi": "bun run src/index.ts defi",
+    "typecheck": "tsc --noEmit",
+    "verify": "bun run src/index.ts verify",
+    "track": "bun run src/index.ts track",
+    "watch": "bun run src/index.ts watch",
+    "movements": "bun run src/index.ts movements",
+    "ledger": "bun run src/index.ts ledger"
+  },
+  "dependencies": {
+    "hono": "^4.13.2",
+    "viem": "^2.55.16"
+  },
+  "devDependencies": {
+    "@types/bun": "latest"
+  }
+}

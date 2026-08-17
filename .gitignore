@@ -1,0 +1,17 @@
+# deps
+node_modules/
+
+# secrets
+.env
+.env.*
+!.env.example
+
+# Financial data — never commit. These hold real balances, transaction history
+# and a full copy of the Wealthfolio database.
+backups/
+ledger/
+.local/
+*.db
+*.db-wal
+*.db-shm
+*.csv

@@ -1,0 +1,39 @@
+# Spark — crypto movement tracker, sidecar to a self-hosted Wealthfolio.
+name: spark
+
+services:
+  spark:
+    build: .
+    container_name: spark
+    restart: unless-stopped
+    networks: [edge]
+    volumes:
+      # Wealthfolio's data directory, read-only. The whole directory, not just
+      # the .db file: SQLite needs the -wal and -shm sidecars to see commits.
+      - ${SPARK_WF_DATA_DIR:-./wealthfolio-data}:/data:ro
+      # Spark's own state: cursors and captured transfers. Must persist —
+      # movements missed while this is gone may be unrecoverable.
+      - spark-state:/state
+    # Read-only Wealthfolio agent token, 0600 beside this file — same pattern
+    # wealthfolio itself uses. Not baked into the image.
+    env_file: [.env]
+    environment:
+      TZ: Europe/Paris
+      SPARK_WF_URL: "http://wealthfolio:8088"
+      SPARK_INTERVAL_MS: "300000"
+    security_opt:
+      - no-new-privileges:true
+    # The watch loop logs every scan, forever. Without rotation the default
+    # json-file driver grows unbounded on a box meant to run unattended.
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  spark-state:
+
+networks:
+  edge:
+    external: true
