@@ -33,12 +33,15 @@ export type TrackResult = {
 }
 
 export async function track(opts: { dbPath: string; statePath: string }): Promise<TrackResult> {
-  const { accounts } = loadAddressBook(opts.dbPath)
+  const { accounts, issues } = loadAddressBook(opts.dbPath)
   const state = new SparkState(opts.statePath)
   const ledger = new Ledger()
   const startedAt = state.startRun()
 
-  const errors: string[] = []
+  // An address the book could not resolve is an address that is never scanned.
+  // Reporting it as an error is the difference between a known gap and a wallet
+  // that silently stops being tracked after a rename in Wealthfolio.
+  const errors: string[] = issues.map((i) => `address book — ${i.account}: ${i.problem}`)
   const scanned: TrackResult['scanned'] = []
   let newTransfers = 0
   /** Start block per chain, resolved once — the search costs ~26 requests. */
@@ -65,9 +68,14 @@ export async function track(opts: { dbPath: string; statePath: string }): Promis
         // Where an explorer exists, one request returns the whole history —
         // vastly cheaper than paging logs, and it still catches CoW trades
         // because it is transfer-based rather than transaction-based.
+        // A failed explorer call must not advance the cursor: doing so skips the
+        // unscanned range forever, and the next run starts past the transfers
+        // that were never captured.
+        let tokenScanFailed = false
         if (chain.explorerApi) {
           const tokens = await ledger.scanTokenTransfers(chain, account.address, from)
           errors.push(...tokens.errors)
+          tokenScanFailed = tokens.errors.length > 0
           added += state.recordTransfers(tokens.transfers)
         }
 
@@ -86,7 +94,9 @@ export async function track(opts: { dbPath: string; statePath: string }): Promis
         added += state.recordTransfers(result.transfers)
         newTransfers += added
 
-        if (result.scannedTo > from) state.setCursor(chain.id, account.address, result.scannedTo)
+        if (result.scannedTo > from && !tokenScanFailed) {
+          state.setCursor(chain.id, account.address, result.scannedTo)
+        }
 
         if (added > 0 || result.scannedTo > from) {
           scanned.push({

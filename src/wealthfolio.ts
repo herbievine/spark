@@ -103,6 +103,15 @@ export class Wealthfolio {
     return JSON.parse(text) as T
   }
 
+  /**
+   * Any MCP tool by name, for the operations that have no typed wrapper here —
+   * importing and deleting activities, which run from a script rather than from
+   * the tracking loop.
+   */
+  async tool<T>(name: string, args: Record<string, unknown> = {}): Promise<T> {
+    return this.call<T>(name, args)
+  }
+
   async getAccounts(): Promise<{ id: string; name: string; currency: string }[]> {
     const res = await this.call<{ accounts: any[] }>('get_accounts')
     return res.accounts

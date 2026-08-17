@@ -66,6 +66,9 @@ export const CHAINS: Chain[] = [
   {
     id: 100,
     name: 'Gnosis',
+    // gnosis.blockscout.com redirects here; using the target directly avoids
+    // depending on the redirect being followed.
+    explorerApi: 'https://gnosisscan.io/api',
     logRpc: 'https://rpc.gnosischain.com',
     logChunk: 40000,
     rpc: 'https://gnosis-rpc.publicnode.com',
@@ -98,6 +101,9 @@ export const CHAINS: Chain[] = [
   {
     id: 10,
     name: 'Optimism',
+    // optimism.blockscout.com redirects here. Reaching the whole history in one
+    // request also sidesteps the rate limit that made log paging unreliable.
+    explorerApi: 'https://explorer.optimism.io/api',
     // mainnet.optimism.io rate-limits by IP within a single backfill.
     logRpc: 'https://optimism.drpc.org',
     logChunk: 4000,
@@ -116,6 +122,9 @@ export const CHAINS: Chain[] = [
   {
     id: 43114,
     name: 'Avalanche',
+    // Avalanche has no Blockscout instance. Routescan serves the same
+    // Etherscan-shaped `tokentx`/`txlist` without needing a key.
+    explorerApi: 'https://api.routescan.io/v2/network/mainnet/evm/43114/etherscan/api',
     logRpc: 'https://avalanche.drpc.org',
     logChunk: 2000,
     logPaceMs: 1200,
@@ -124,7 +133,17 @@ export const CHAINS: Chain[] = [
     aavePool: '0x794a61358D6845594F94dc1DB02A252b5b4814aD',
   },
   // Plasma has no Aave deployment; XPL is its native token.
-  { id: 9745, name: 'Plasma', rpc: 'https://rpc.plasma.to', native: 'XPL', logRpc: 'https://rpc.plasma.to', logChunk: 9000 },
+  {
+    id: 9745,
+    name: 'Plasma',
+    // Routescan serves Plasma, which replaces ~2,900 paged log queries per
+    // address with one request and reaches back to genesis.
+    explorerApi: 'https://api.routescan.io/v2/network/mainnet/evm/9745/etherscan/api',
+    rpc: 'https://rpc.plasma.to',
+    native: 'XPL',
+    logRpc: 'https://rpc.plasma.to',
+    logChunk: 9000,
+  },
   { id: 143, name: 'Monad', rpc: 'https://rpc.monad.xyz', native: 'MON' },
 ]
 

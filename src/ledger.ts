@@ -86,6 +86,18 @@ export async function headBlock(chain: Chain): Promise<number> {
 }
 
 /** Resolves the block closest to a timestamp, by binary search over block headers. */
+/**
+ * `fetch` with a deadline.
+ *
+ * An explorer that accepts the connection and then never answers would otherwise
+ * hang the whole tracking loop indefinitely — one slow host stalling every chain
+ * behind it. A timeout surfaces as an error, which leaves the cursor where it is
+ * and retries on the next run, so the range is deferred rather than skipped.
+ */
+async function fetchWithTimeout(url: string, ms = 60000): Promise<Response> {
+  return fetch(url, { signal: AbortSignal.timeout(ms) })
+}
+
 export async function blockAtTime(chain: Chain, unixSeconds: number): Promise<number> {
   const url = chain.logRpc ?? chain.rpc
   const head = Number(await rpc(url, 'eth_blockNumber', []))
@@ -221,9 +233,27 @@ export class Ledger {
       `&startblock=${fromBlock}&sort=desc`
 
     try {
-      const res = await fetch(url)
-      const body = (await res.json()) as { result?: any }
-      const rows = Array.isArray(body.result) ? body.result : []
+      // Same throttling trap as `scanTokenTransfers`: a string `result` means
+      // the explorer refused, not that the address has no native transfers.
+      let rows: any[] | null = null
+      let lastMessage = ''
+      for (let attempt = 0; attempt < 5; attempt++) {
+        if (attempt > 0) await new Promise((r) => setTimeout(r, 2000 * attempt))
+        const res = await fetchWithTimeout(url)
+        const body = (await res.json()) as { result?: any; message?: string }
+        if (Array.isArray(body.result)) {
+          rows = body.result
+          break
+        }
+        lastMessage = String(body.result ?? body.message ?? `HTTP ${res.status}`)
+        if (/no transactions found/i.test(lastMessage)) {
+          rows = []
+          break
+        }
+      }
+      if (rows === null) {
+        return { transfers: [], gas: [], errors: [`${chain.name} native ${address}: ${lastMessage}`] }
+      }
 
       const transfers: TransferRow[] = []
       const gas: { chainId: number; txHash: string; address: string; blockTime: number; wei: string }[] = []
@@ -285,11 +315,32 @@ export class Ledger {
     if (!chain.explorerApi) return { transfers: [], errors: [] }
 
     try {
-      const res = await fetch(
-        `${chain.explorerApi}?module=account&action=tokentx&address=${address}&startblock=${fromBlock}&sort=asc`,
-      )
-      const body = (await res.json()) as { result?: any }
-      const rows = Array.isArray(body.result) ? body.result : []
+      const url = `${chain.explorerApi}?module=account&action=tokentx&address=${address}&startblock=${fromBlock}&sort=asc`
+
+      // A throttled explorer answers 200 with `result` as a *message string*.
+      // Reading that as "no transfers" and advancing the cursor past it is
+      // silent, permanent data loss, so a non-array result is retried and then
+      // reported as an error rather than mistaken for an empty history.
+      let rows: any[] | null = null
+      let lastMessage = ''
+      for (let attempt = 0; attempt < 5; attempt++) {
+        if (attempt > 0) await new Promise((r) => setTimeout(r, 2000 * attempt))
+        const res = await fetchWithTimeout(url)
+        const body = (await res.json()) as { result?: any; message?: string }
+        if (Array.isArray(body.result)) {
+          rows = body.result
+          break
+        }
+        lastMessage = String(body.result ?? body.message ?? `HTTP ${res.status}`)
+        // "No transactions found" is a real, empty answer — not a failure.
+        if (/no transactions found|no token transfers found/i.test(lastMessage)) {
+          rows = []
+          break
+        }
+      }
+      if (rows === null) {
+        return { transfers: [], errors: [`${chain.name} tokentx ${address}: ${lastMessage}`] }
+      }
 
       // The explorer does not return `logIndex`. Defaulting it to 0 made every
       // leg of a transaction share the primary key (chain, tx, logIndex), so
