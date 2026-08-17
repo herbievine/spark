@@ -125,7 +125,10 @@ export const CHAINS: Chain[] = [
     // Avalanche has no Blockscout instance. Routescan serves the same
     // Etherscan-shaped `tokentx`/`txlist` without needing a key.
     explorerApi: 'https://api.routescan.io/v2/network/mainnet/evm/43114/etherscan/api',
-    logRpc: 'https://avalanche.drpc.org',
+    // The official endpoint is the only one that serves receipts for old blocks;
+    // drpc and publicnode are pruned and answer "not found" for a transaction
+    // that exists, which `verify-transfers` would misread as a phantom row.
+    logRpc: 'https://api.avax.network/ext/bc/C/rpc',
     logChunk: 2000,
     logPaceMs: 1200,
     rpc: 'https://avalanche-c-chain-rpc.publicnode.com',

@@ -140,6 +140,23 @@ if (process.argv[2] === 'resolve-symbols') {
   process.exit(0)
 }
 
+// `verify-transfers [chainId,…]` — check explorer-derived rows against receipts,
+// giving each its real log index and deleting any the chain does not have.
+if (process.argv[2] === 'verify-transfers') {
+  const { verifyTransfers } = await import('./verify-transfers')
+  const { CHAINS } = await import('./chains')
+  const ids = process.argv[3]
+    ? process.argv[3].split(',').map(Number)
+    : CHAINS.filter((c) => c.explorerApi).map((c) => c.id)
+  const r = await verifyTransfers(statePath(), ids)
+  console.log(
+    `transactions ${r.transactions}, matched ${r.matched}, reindexed ${r.reindexed}, deleted ${r.deleted}`,
+  )
+  for (const e of r.errors.slice(0, 15)) console.log(`  ! ${e}`)
+  if (r.errors.length > 15) console.log(`  … ${r.errors.length - 15} more`)
+  process.exit(0)
+}
+
 if (process.argv[2] === 'movements') {
   const state = new SparkState(statePath())
   const { accounts } = loadAddressBook(dbPath())

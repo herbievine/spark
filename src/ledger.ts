@@ -240,7 +240,7 @@ export class Ledger {
       for (let attempt = 0; attempt < 5; attempt++) {
         if (attempt > 0) await new Promise((r) => setTimeout(r, 5000 * attempt))
         const res = await fetchWithTimeout(url)
-        const body = (await res.json()) as { result?: any; message?: string }
+        const body = ((await res.json().catch(() => null)) ?? {}) as { result?: any; message?: string }
         if (Array.isArray(body.result)) {
           rows = body.result
           break
@@ -326,7 +326,7 @@ export class Ledger {
       for (let attempt = 0; attempt < 5; attempt++) {
         if (attempt > 0) await new Promise((r) => setTimeout(r, 5000 * attempt))
         const res = await fetchWithTimeout(url)
-        const body = (await res.json()) as { result?: any; message?: string }
+        const body = ((await res.json().catch(() => null)) ?? {}) as { result?: any; message?: string }
         if (Array.isArray(body.result)) {
           rows = body.result
           break
