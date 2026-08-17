@@ -106,6 +106,7 @@ export async function blockAtTime(chain: Chain, unixSeconds: number): Promise<nu
 
 export class Ledger {
   private readonly decimalsCache = new Map<string, number>()
+  private readonly unregisteredSymbols = new Map<string, string>()
   private readonly symbolByContract: Map<string, { symbol: string; chainId: number }>
 
   constructor(private readonly chains: Chain[] = CHAINS) {
@@ -319,6 +320,35 @@ export class Ledger {
     }
   }
 
+  /**
+   * Symbol for an unregistered contract, read from the contract itself.
+   *
+   * The explorer path gets symbols for free; the log path does not, and a wall of
+   * `UNKNOWN:0x…` hides whether a row is real. The name is untrusted — a hostile
+   * contract can claim any ticker — so it is suffixed `?` and the spam and
+   * homoglyph filters still apply.
+   */
+  private async symbolOf(chain: Chain, contract: string): Promise<string> {
+    const known = this.symbolByContract.get(`${chain.id}:${contract}`)
+    if (known) return known.symbol
+    const cached = this.unregisteredSymbols.get(`${chain.id}:${contract}`)
+    if (cached !== undefined) return cached
+
+    let result = `UNKNOWN:${contract.slice(0, 10)}`
+    try {
+      const sym = await this.client(chain).readContract({
+        address: contract as `0x${string}`,
+        abi: erc20Abi,
+        functionName: 'symbol',
+      })
+      if (sym) result = `${String(sym).slice(0, 12)}?`
+    } catch {
+      // Non-standard or non-existent token; the address stub is the honest answer.
+    }
+    this.unregisteredSymbols.set(`${chain.id}:${contract}`, result)
+    return result
+  }
+
   private async decode(chain: Chain, logs: RpcLog[]): Promise<TransferRow[]> {
     const blockTimes = new Map<string, number>()
     const rows: TransferRow[] = []
@@ -354,7 +384,7 @@ export class Ledger {
         contract,
         // An unregistered contract is recorded, not dropped — it must surface as
         // an alert rather than vanish, since the API cannot create assets for it.
-        symbol: known?.symbol ?? `UNKNOWN:${contract.slice(0, 10)}`,
+        symbol: known?.symbol ?? (await this.symbolOf(chain, contract)),
         fromAddr: `0x${log.topics[1]!.slice(26)}`,
         toAddr: `0x${log.topics[2]!.slice(26)}`,
         rawValue: BigInt(log.data === '0x' ? '0x0' : log.data).toString(),
