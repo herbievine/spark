@@ -352,6 +352,23 @@ Also honoured: `WF_BASE_URL`, `WF_DB_PATH`, `PORT`.
 - **MCP at `/mcp`** for holdings, cash and accounts. The PAT authenticates *only*
   this endpoint — REST under `/api/v1` rejects it with 401 and takes nothing but
   the `wf_session` cookie. Needs `WF_MCP_ENABLED=true` on the server.
+- **REST under `/api/v1`, with a session cookie** for everything MCP cannot do.
+  MCP exposes no way to *delete* an activity, so replacing a history rather than
+  appending to one has to go through REST:
+
+  ```sh
+  PW=$(security find-generic-password -a "$USER" -s wealthfolio -w)
+  curl -s -c cookies.txt -X POST -H 'content-type: application/json' \
+       --data "{\"password\":\"$PW\"}" "$WF/api/v1/auth/login"
+  ```
+
+  - `POST /api/v1/activities/search` — `{page, pageSize, accountIdFilter[], sort}`,
+    and `page` is **0-based**.
+  - `POST /api/v1/activities/bulk` — `{creates, updates, deleteIds}`, which is the
+    only batch delete there is.
+
+  This still goes through the application, so the valuation engine runs and the
+  WAL stays under one writer — unlike writing to the database directly.
 - **The SQLite database, read-only**, for one field: `accounts.account_number`,
   which holds the wallet addresses. MCP's `get_accounts` cannot return it in
   either display mode.
