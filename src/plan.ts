@@ -54,10 +54,20 @@ export function buildPlan(input: PlanInput): PlanResult {
   const skipped = new Map<string, number>()
   const skip = (reason: string) => skipped.set(reason, (skipped.get(reason) ?? 0) + 1)
 
+  // A negative opening means the captured history claims more inflow than the
+  // current balance can support, so an outflow was never captured. Booking a
+  // partial history would put a position in Wealthfolio that the chain does not
+  // have. Refuse the whole (account, symbol) instead and say so — a known gap is
+  // worth more than a number that looks right and is not.
+  const unreconciled = new Set(
+    Object.entries(openings).filter(([, q]) => q < 0).map(([k]) => k),
+  )
+
   // 1. Opening positions. A synthetic baseline rather than an event, so a plain
   //    date is correct here — there is nothing for it to be ordered against.
   const out: PlanRow[] = []
   for (const [key, quantity] of Object.entries(openings)) {
+    if (unreconciled.has(key)) { skip(`unreconciled history: ${key}`); continue }
     if (quantity <= 0) continue
     const [account, chainSymbol] = key.split('|') as [string, string]
     const accountId = accountIds[account]
@@ -78,6 +88,7 @@ export function buildPlan(input: PlanInput): PlanResult {
     if (!symbol) { skip(`symbol not in allow-list: ${r.symbol}`); continue }
     const q = Number(r.quantity)
     if (!(q > 0)) { skip('zero quantity'); continue }
+    if (unreconciled.has(`${r.account}|${r.symbol}`)) { skip(`unreconciled history: ${r.account}|${r.symbol}`); continue }
 
     const key = `${accountId}|${r.txHash}|${symbol}`
     const signed = q * (r.direction === 'in' ? 1 : -1)
