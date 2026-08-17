@@ -34,6 +34,9 @@ export class SparkState {
   constructor(path: string) {
     this.db = new Database(path, { create: true })
     this.db.exec('PRAGMA journal_mode = WAL')
+    // Another Spark process (a maintenance command) may hold the lock briefly.
+    // Waiting beats failing a scan, since a failed scan leaves a gap.
+    this.db.exec('PRAGMA busy_timeout = 30000')
     this.migrate()
   }
 

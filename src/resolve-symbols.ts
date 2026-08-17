@@ -23,6 +23,9 @@ export type ResolveResult = {
 
 export async function resolveSymbols(statePath: string): Promise<ResolveResult> {
   const db = new Database(statePath)
+  // The tracker holds the write lock during a scan. Wait for it rather than
+  // failing, so this can run against a live instance without stopping capture.
+  db.exec('PRAGMA busy_timeout = 30000')
   const registry = new Map(TOKENS.map((t) => [`${t.chainId}:${t.address.toLowerCase()}`, t.symbol]))
 
   const pending = db
