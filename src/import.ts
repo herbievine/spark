@@ -43,9 +43,16 @@ export const WEALTHFOLIO_SYMBOLS: Record<string, string> = {
   // 'POL-USD' resolves to **Polkadot** — the same class of trap as WETH matching
   // "Wetouch Technology Inc.", and it would silently misprice the position.
   POL: 'MATIC-USD',
+  // 'ARB-USD' resolves to "ARbit USD" — the same trap as WETH matching a NASDAQ
+  // listing. Arbitrum's real listing is ARB11841, verified as "Arbitrum USD".
+  ARB: 'ARB11841-USD',
+  PENDLE: 'PENDLE-USD', // Pendle USD
   // Deliberately NOT mapped:
-  //   ARB  — 'ARB-USD' resolves to "ARbit USD", which is not obviously Arbitrum.
+  //   WXPL — wrapped XPL has no listing of its own, and pricing it as XPL would
+  //     merge it with the unwrapped position: one Wealthfolio symbol cannot hold
+  //     two chain symbols without the quantity ceasing to be what the chain says.
   //   aTokens, PT-*, variableDebt — receipt and debt tokens, not holdings.
+  //   WEEUR — ether.fi's Liquid Euro vault token; no verified listing to price it.
 }
 
 /** Stablecoins whose unit price is their peg, so no price feed is needed. */
