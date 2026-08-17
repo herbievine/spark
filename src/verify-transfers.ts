@@ -73,10 +73,11 @@ export async function verifyTransfers(statePath: string, chainIds: number[]): Pr
   for (const chainId of chainIds) {
     const chain = CHAINS.find((c) => c.id === chainId)
     if (!chain) continue
-    // Prefer the log endpoint: receipts for old blocks need an archive node, and
-    // several of the plain `rpc` hosts are pruned — they answer "not found" for a
-    // transaction that exists, which would look exactly like a phantom row.
-    const rpcUrl = chain.logRpc ?? chain.rpc
+    // Try every endpoint the chain has before believing a transaction is absent.
+    // A pruned node answers "not found" for a transaction that plainly exists,
+    // and Ethereum's log endpoint is a Flashbots relay that serves no receipts at
+    // all — either would look exactly like a phantom row and delete real data.
+    const rpcUrls = [...new Set([chain.logRpc, chain.rpc].filter(Boolean) as string[])]
 
     const txs = db
       .query<{ tx_hash: string }, [number]>(
@@ -86,11 +87,18 @@ export async function verifyTransfers(statePath: string, chainIds: number[]): Pr
 
     for (const { tx_hash } of txs) {
       result.transactions++
-      let logs
-      try {
-        logs = await receiptLogs(rpcUrl, tx_hash)
-      } catch (err) {
-        result.errors.push(`${chain.name} ${tx_hash.slice(0, 12)}: ${(err as Error).message}`)
+      let logs = null
+      let failure = ''
+      for (const url of rpcUrls) {
+        try {
+          logs = await receiptLogs(url, tx_hash)
+        } catch (err) {
+          failure = (err as Error).message
+        }
+        if (logs) break
+      }
+      if (!logs && failure) {
+        result.errors.push(`${chain.name} ${tx_hash.slice(0, 12)}: ${failure}`)
         continue
       }
       // No receipt means the node could not answer, not that the transfer is
