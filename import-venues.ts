@@ -108,8 +108,39 @@ for (const w of wanted) {
   })
 }
 
+/**
+ * Merge identical rows falling on the same day.
+ *
+ * Wealthfolio fingerprints duplicates on the calendar day, so twenty identical
+ * Simple Earn interest payments on one day are read as one row repeated and
+ * nineteen are silently skipped — which is exactly what happened: 1,094 of 3,601
+ * vanished on the first pass. Summing them keeps the quantity truthful and
+ * presents Wealthfolio with one row it will actually accept.
+ */
+const mergedPlan = (() => {
+  const merged = new Map<string, Planned & { merged: number }>()
+  for (const p of plan) {
+    const key = [p.accountId, p.date.slice(0, 10), p.symbol, p.activityType].join('|')
+    const seen = merged.get(key)
+    if (seen) {
+      // Weight the price by quantity, so the merged row's value is the sum of
+      // the values rather than an arbitrary one of the prices.
+      const total = seen.quantity + p.quantity
+      seen.unitPrice = (seen.unitPrice * seen.quantity + p.unitPrice * p.quantity) / total
+      seen.quantity = total
+      seen.merged++
+    } else merged.set(key, { ...p, merged: 1 })
+  }
+  return [...merged.values()]
+})()
+
+const collapsed = plan.length - mergedPlan.length
+plan.length = 0
+plan.push(...mergedPlan.map(({ merged, ...rest }) => rest))
+
 writeFileSync('.local/venue-plan.json', JSON.stringify(plan, null, 1))
 console.log(`venue activities planned: ${plan.length}  -> .local/venue-plan.json`)
+console.log(`same-day rows merged:     ${collapsed} (would have been skipped as duplicates)`)
 console.log(`prices missing: ${table.missing.length ? table.missing.join(', ') : 'none'}`)
 console.log('\nskipped:')
 for (const [why, n] of [...skipped].sort((a, b) => b[1] - a[1])) console.log(`  ${String(n).padStart(5)}  ${why}`)

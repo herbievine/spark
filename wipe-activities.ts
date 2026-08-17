@@ -19,8 +19,15 @@ export {}
 const WF = process.env.SPARK_WF_URL ?? 'https://wealth.herbievine.com'
 const COMMIT = process.env.SPARK_COMMIT === '1'
 
-/** Exactly the accounts Spark derives from chain data. */
-const WALLET_ACCOUNTS = ['Hot Wallet', 'Nano X', 'Nano S', 'Multisig Wallet']
+/**
+ * Accounts to clear. Defaults to exactly the ones Spark derives from chain data;
+ * `SPARK_WIPE_ACCOUNTS` overrides it for the venue accounts, which sometimes
+ * need re-importing wholesale after a mapping change.
+ */
+const WALLET_ACCOUNTS = (process.env.SPARK_WIPE_ACCOUNTS ?? 'Hot Wallet,Nano X,Nano S,Multisig Wallet')
+  .split(',')
+  .map((s) => s.trim())
+  .filter(Boolean)
 
 const password = process.env.SPARK_WF_PASSWORD
 if (!password) {
