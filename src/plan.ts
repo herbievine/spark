@@ -39,6 +39,16 @@ export type PlanInput = {
   openingDate: string
   /** Price per `WF_SYMBOL|YYYY-MM-DD`, plus `WF_SYMBOL` as a fallback. */
   prices: Record<string, number>
+  /**
+   * Native-token spend that no transfer records: gas, and any residue the
+   * captured history cannot explain.
+   *
+   * Gas leaves the wallet without emitting a `Transfer`, so a native balance
+   * derived from transfers alone is always too high by exactly the fees paid —
+   * which is what made XDAI, XPL and AVAX look unreconciled by amounts that
+   * matched the recorded gas to the digit.
+   */
+  outflows?: { account: string; chainSymbol: string; date: string; quantity: number; reason: string }[]
 }
 
 export type PlanResult = {
@@ -112,7 +122,28 @@ export function buildPlan(input: PlanInput): PlanResult {
     })
   }
 
-  // 3. Merge same-day identical rows so none is silently skipped as a duplicate.
+  // 3. Native spend with no transfer behind it — gas, and unexplained residue.
+  for (const g of input.outflows ?? []) {
+    if (!(g.quantity > 0)) continue
+    const accountId = accountIds[g.account]
+    const symbol = WEALTHFOLIO_SYMBOLS[g.chainSymbol]
+    if (!accountId) { skip(`no account id for ${g.account}`); continue }
+    if (!symbol) { skip(`symbol not in allow-list: ${g.chainSymbol}`); continue }
+    if (unreconciled.has(`${g.account}|${g.chainSymbol}`)) { skip(`unreconciled history: ${g.account}|${g.chainSymbol}`); continue }
+    const unitPrice = priceFor(prices, symbol, g.date)
+    if (unitPrice === undefined) { skip(`no price for ${symbol} on ${g.date}`); continue }
+    out.push({
+      accountId,
+      date: `${g.date}T23:59:00Z`, // after the day's movements, so nothing clamps against it
+      activityType: 'TRANSFER_OUT',
+      symbol,
+      quantity: g.quantity,
+      unitPrice,
+      currency: 'USD',
+    })
+  }
+
+  // 4. Merge same-day identical rows so none is silently skipped as a duplicate.
   const merged = new Map<string, PlanRow>()
   for (const r of out) {
     const key = [r.accountId, r.date.slice(0, 10), r.symbol, r.activityType, r.quantity.toFixed(10), r.unitPrice.toFixed(8)].join('|')

@@ -22,7 +22,8 @@ import { buildLedger } from './src/ledger-export'
 import { buildPlan, planNet } from './src/plan'
 import { WEALTHFOLIO_SYMBOLS } from './src/import'
 import { Wallet } from './src/wallet'
-import { WALLETS } from './src/config'
+import { WALLETS, DUST_TOLERANCE_USD } from './src/config'
+import { CHAINS } from './src/chains'
 import { dailyPrices, fillForward } from './src/yahoo-prices'
 
 const STATE = process.env.SPARK_STATE_PATH ?? '.local/spark.db'
@@ -81,24 +82,71 @@ for (const w of book) {
   }
 }
 
-const openings: Record<string, number> = {}
-const residues: { key: string; current: number; net: number; opening: number }[] = []
-for (const key of new Set([...net.keys(), ...current.keys()])) {
-  const cur = current.get(key) ?? 0
-  const mv = net.get(key) ?? 0
-  let opening = cur - mv
-  if (Math.abs(opening) <= tolerance(cur)) opening = 0
-  openings[key] = opening
-  residues.push({ key, current: cur, net: mv, opening })
-}
-
+// Prices first: the residue check below needs one to decide whether an
+// unexplained shortfall is dust or a real gap.
 const days = rows.map((r) => r.date).sort()
 const openingDate = days[0]!
+const today = new Date().toISOString().slice(0, 10)
 const symbols = [...new Set(Object.values(WEALTHFOLIO_SYMBOLS))]
-const table = await dailyPrices(symbols, openingDate, new Date().toISOString().slice(0, 10))
-fillForward(table, symbols, openingDate, new Date().toISOString().slice(0, 10))
+const table = await dailyPrices(symbols, openingDate, today)
+fillForward(table, symbols, openingDate, today)
 
-const plan = buildPlan({ rows, accountIds, openings, openingDate, prices: table.prices })
+// Gas: native spend that emits no transfer, so a balance derived from transfers
+// alone is too high by exactly the fees paid. Aggregated per day — one row a day
+// per asset, rather than one per transaction.
+const gasDb = new Database(STATE, { readonly: true })
+const nativeOf = new Map(CHAINS.map((c) => [c.id, c.native]))
+const accountOf = new Map(book.map((b) => [b.address.toLowerCase(), b.name]))
+const outflows: { account: string; chainSymbol: string; date: string; quantity: number; reason: string }[] = []
+const gasTotal = new Map<string, number>()
+for (const g of gasDb
+  .query<{ chain_id: number; address: string; day: string; wei: string }, []>(
+    `SELECT chain_id, address, date(block_time,'unixepoch') AS day, CAST(SUM(CAST(wei AS REAL)) AS TEXT) AS wei
+       FROM gas_costs GROUP BY chain_id, address, day`,
+  )
+  .all()) {
+  const account = accountOf.get(g.address.toLowerCase())
+  const chainSymbol = nativeOf.get(g.chain_id)
+  if (!account || !chainSymbol) continue
+  const quantity = Number(g.wei) / 1e18
+  if (!(quantity > 0)) continue
+  outflows.push({ account, chainSymbol, date: g.day, quantity, reason: 'gas' })
+  const key = `${account}|${chainSymbol}`
+  gasTotal.set(key, (gasTotal.get(key) ?? 0) + quantity)
+}
+gasDb.close()
+
+const lastDay = rows.map((r) => r.date).sort().at(-1)!
+
+const openings: Record<string, number> = {}
+const residues: { key: string; current: number; net: number; opening: number; gas: number }[] = []
+for (const key of new Set([...net.keys(), ...current.keys(), ...gasTotal.keys()])) {
+  const cur = current.get(key) ?? 0
+  const mv = net.get(key) ?? 0
+  const gas = gasTotal.get(key) ?? 0
+  // Gas is booked as an outflow, so the opening has to carry it: the plan's net
+  // is (movements − gas), and the opening is what makes that equal the balance.
+  let opening = cur - mv + gas
+  if (Math.abs(opening) <= tolerance(cur)) opening = 0
+
+  // A residue still negative after gas is spend the capture never saw. Booking a
+  // dust-sized one as an outflow keeps the position (and its balance) truthful;
+  // anything larger is a real gap and is still refused rather than invented.
+  if (opening < 0) {
+    const [account, chainSymbol] = key.split('|') as [string, string]
+    const symbol = WEALTHFOLIO_SYMBOLS[chainSymbol]
+    const price = symbol ? (table.prices[`${symbol}|${lastDay}`] ?? table.prices[symbol]) : undefined
+    if (price !== undefined && Math.abs(opening) * price < DUST_TOLERANCE_USD) {
+      outflows.push({ account, chainSymbol, date: lastDay, quantity: -opening, reason: 'unexplained residue' })
+      opening = 0
+    }
+  }
+
+  openings[key] = opening
+  residues.push({ key, current: cur, net: mv, opening, gas })
+}
+
+const plan = buildPlan({ rows, accountIds, openings, openingDate, prices: table.prices, outflows })
 
 writeFileSync(OUT, JSON.stringify(plan.rows, null, 1))
 
