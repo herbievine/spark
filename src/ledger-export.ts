@@ -58,7 +58,12 @@ const label = (address: string, book: Map<string, string>): string =>
  * "visit"/"claim" instruction, or non-ASCII characters used to imitate a real
  * ticker. Legitimate tickers are short and ASCII.
  */
-const SPAM_SYMBOL = /https?:|www\.|\.(com|io|xyz|us|app|net|org)\b|visit|claim|reward|airdrop|\s/i
+const SPAM_SYMBOL =
+  // A real ticker is short, ASCII, and has no punctuation beyond - and .
+  // Anything carrying a URL, a slash, whitespace, or an instruction is an advert
+  // painted into the token's own name. Matching structure rather than a TLD list
+  // avoids the whack-a-mole that let "t.me/s/…" through.
+  /[\/\s()]|https?:|www\.|\.[a-z]{2,}|visit|claim|reward|airdrop|bonus|free|_/i
 
 function bookingBlock(kind: string, symbol: string): string {
   if (kind === 'spoof') return 'forged Transfer event — no value moved'
@@ -66,6 +71,23 @@ function bookingBlock(kind: string, symbol: string): string {
   if (SPAM_SYMBOL.test(symbol)) return 'advertising spam token — symbol contains a URL or instruction'
   if (/[^\x00-\x7F]/.test(symbol)) return 'non-ASCII symbol — homoglyph impersonation'
   return ''
+}
+
+/**
+ * An unvetted token that only ever arrived, never left, and is not in the
+ * registry is an unsolicited airdrop. Real holdings get spent, swapped or at
+ * least registered; airdrops accumulate in one direction and are never touched.
+ */
+function inboundOnlyUnvetted(rows: LedgerRow[]): Set<string> {
+  const seen = new Map<string, { in: boolean; out: boolean }>()
+  for (const r of rows) {
+    if (!r.symbol.endsWith('?')) continue
+    const e = seen.get(r.symbol) ?? { in: false, out: false }
+    if (r.direction === 'in') e.in = true
+    else e.out = true
+    seen.set(r.symbol, e)
+  }
+  return new Set([...seen].filter(([, e]) => e.in && !e.out).map(([s]) => s))
 }
 
 export function buildLedger(
@@ -126,6 +148,15 @@ export function buildLedger(
         doNotBook: bookingBlock(kind, t.symbol),
         note: movement?.note ?? '',
       })
+    }
+  }
+
+  // Second pass: an unvetted token that only ever arrived is an airdrop. This
+  // needs the whole set, so it cannot be decided row by row above.
+  const airdrops = inboundOnlyUnvetted(rows)
+  for (const r of rows) {
+    if (!r.doNotBook && airdrops.has(r.symbol)) {
+      r.doNotBook = 'unsolicited airdrop — unregistered token, only ever received'
     }
   }
 
