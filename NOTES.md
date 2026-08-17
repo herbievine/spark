@@ -299,6 +299,34 @@ wrong address is the failure mode with no symptom: `balanceOf` succeeds and
 returns a real number for the wrong asset. This has already caught one — the
 Gnosis address that looks like EURC reports **EURe** (Monerium), a different asset.
 
+## One movement, two accounts
+
+Chain data and venue exports describe the same money from opposite ends, and the
+rule that keeps them from double-counting is simple: **each side is booked in its
+own account.** A Coinbase "Send" is money leaving the *Coinbase* account; the
+transfer that arrives is money entering *a wallet*. Booking both is double-entry,
+not duplication. `venues.ts` matches the two so the link is visible, and
+`ledger/unmatched.csv` lists what has no counterpart.
+
+peer.xyz deliberately gets no account. It is an on-ramp, not somewhere a balance
+is held — its fulfilled orders land in a wallet, and the chain capture already
+books them there. Giving it an account would double-count for real.
+
+Things that took a wrong import to learn:
+
+- **Coinbase calls Coinbase Wrapped BTC "BTC".** Sent to an EVM address it is
+  cbBTC on Base, not bitcoin — 0.1 BTC of sends looked unmatched because of it.
+- **Coinbase sends to Bitcoin, Cardano and Solana addresses** are out of Spark's
+  reach entirely; those chains are not scanned, so their absence is expected and
+  not a gap.
+- **Same-day identical rows must be merged before import.** Wealthfolio
+  fingerprints duplicates on the calendar day, so twenty identical Simple Earn
+  interest payments read as one row repeated. The first venue import lost 1,094
+  of 3,601 that way, silently, because a skipped duplicate is not an error.
+- **An account has to exist before its balance has anywhere to land.** Zeal and
+  ether.fi Cash had none, so their holdings were invisible and every payment into
+  them read as money leaving the portfolio.
+
 ## Explorers cannot be taken at their word
 
 History older than a free RPC will serve has to come from a block explorer, and

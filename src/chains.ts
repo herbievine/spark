@@ -162,6 +162,14 @@ export type TokenSpec = {
    * every run is pure noise. Counted in a note so the exclusion stays visible.
    */
   dust?: true
+  /**
+   * A superseded contract: kept so its historical transfers still resolve to a
+   * vetted symbol, but never read for a balance.
+   *
+   * Monerium's original EURe forwards to its replacement, so *both* contracts
+   * report the same holding — registering both counted Zeal's euros twice.
+   */
+  historic?: true
 }
 
 /**
@@ -197,7 +205,7 @@ export const TOKENS: TokenSpec[] = [
   // Both are held, so both are registered — without the current one the euro
   // balance Zeal actually spends is invisible.
   { chainId: 100, symbol: 'EURe', address: '0x420CA0f9B9b604cE0fd9C18EF134C705e5Fa3430' },
-  { chainId: 100, symbol: 'EURe', address: '0xcB444e90D8198415266c6a2724b7900fb12FC56E' },
+  { chainId: 100, symbol: 'EURe', address: '0xcB444e90D8198415266c6a2724b7900fb12FC56E', historic: true },
   // GNO, the Gnosis chain's own governance token.
   { chainId: 100, symbol: 'GNO', address: '0x9C58BAcC331c9aa871AFD802DB6379a98e80CEdb' },
   // Polygon
@@ -206,6 +214,14 @@ export const TOKENS: TokenSpec[] = [
   // Base
   { chainId: 8453, symbol: 'USDC', address: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913' },
   { chainId: 8453, symbol: 'EURC', address: '0x60a3E35Cc302bFA44Cb288Bc5a4F316Fdb1adb42' },
+  // Optimism — where the ether.fi Cash account actually spends. Unregistered,
+  // these read as unvetted `USDC?`/`EURC?` and could never be booked.
+  { chainId: 10, symbol: 'USDC', address: '0x0b2c639c533813f4aa9d7837caf62653d097ff85' },
+  { chainId: 10, symbol: 'EURC', address: '0xdcb612005417dc906ff72c87df732e5a90d49e11' },
+  // ether.fi's Liquid Euro vault token. Registered so it is identified rather
+  // than unvetted, but deliberately absent from WEALTHFOLIO_SYMBOLS: no verified
+  // listing to price it against, and a guessed price corrupts cost basis.
+  { chainId: 10, symbol: 'WEEUR', address: '0xcc476b1a49bcdf5192561e87b6fb8ea78aa28c13' },
   { chainId: 8453, symbol: 'WSTETH', address: '0xc1CBa3fCea344f92D9239c08C0568f6F2F0ee452' },
   // Avalanche
   { chainId: 43114, symbol: 'WAVAX', address: '0xB31f66AA3C1e785363F0875A1B74E27b85FD66c7' },

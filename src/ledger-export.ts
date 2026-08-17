@@ -12,7 +12,7 @@
  */
 
 import { SparkState } from './state'
-import { chainById } from './chains'
+import { chainById, TOKENS } from './chains'
 import { KNOWN_COUNTERPARTIES, VENUE_LABELS } from './config'
 import { KNOWN_EXCHANGES } from './counterparties'
 import { classify, type Movement } from './movements'
@@ -101,6 +101,17 @@ export function buildLedger(
   const movements: Movement[] = classify(state, book, opts.limit ?? 100000)
   const transfers = state.recentTransfers(opts.limit ?? 100000)
 
+  /**
+   * Superseded contracts that mirror their replacement's events.
+   *
+   * Monerium's migration emits the *same* transfer on both the old and the new
+   * EURe contract in one transaction — two real logs, one real balance change.
+   * Counting both doubled every euro Zeal received.
+   */
+  const historic = new Set(
+    TOKENS.filter((t) => t.historic).map((t) => `${t.chainId}:${t.address.toLowerCase()}`),
+  )
+
   // Movements carry the interpretation; transfers carry the evidence. Joining
   // them keeps both in one row rather than making them cross-reference.
   const kindByTx = new Map<string, Movement>()
@@ -111,6 +122,7 @@ export function buildLedger(
   for (const t of transfers) {
     const when = new Date(t.blockTime * 1000)
     if (opts.year && when.getUTCFullYear() !== opts.year) continue
+    if (t.contract && historic.has(`${t.chainId}:${t.contract.toLowerCase()}`)) continue
 
     const from = byAddress.get(t.fromAddr)
     const to = byAddress.get(t.toAddr)

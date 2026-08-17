@@ -48,7 +48,7 @@ export class Wallet {
     await Promise.all(
       this.chains.map(async (chain) => {
         const client = this.client(chain)
-        const tokens = TOKENS.filter((t) => t.chainId === chain.id)
+        const tokens = TOKENS.filter((t) => t.chainId === chain.id && !t.historic)
 
         try {
           const native = await client.getBalance({ address: this.address })
@@ -117,7 +117,7 @@ export class Wallet {
       this.chains.map(async (chain) => {
         const client = this.client(chain)
         await Promise.all(
-          TOKENS.filter((t) => t.chainId === chain.id).map(async (token) => {
+          TOKENS.filter((t) => t.chainId === chain.id && !t.historic).map(async (token) => {
             try {
               const onChain = await client.readContract({
                 address: token.address,
