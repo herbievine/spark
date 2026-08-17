@@ -101,17 +101,26 @@ export const KNOWN_COUNTERPARTIES: Record<string, string> = {
  * Populated from observed data rather than guessed: an address is only added
  * once it has been confirmed, because a wrong label silently misclassifies a
  * real movement.
+ *
+ * Set from `SPARK_VENUE_LABELS` as `address=label,address=label`. These live in
+ * the environment for the same reason wallet addresses do: an ether.fi Cash
+ * top-up proxy is deterministic *per user*, so publishing one here would tie a
+ * named GitHub account to every payment that ever passed through it. The
+ * previous hard-coded entry did exactly that.
+ *
+ * That proxy is worth labelling because it is not a protocol-level address:
+ * `isTopUpContract()` is true and its owner is ether.fi's TopUpSourceFactory,
+ * which has deployed ~84k sibling proxies all delegating to the shared `TopUpV2`
+ * beacon — which is why the implementation name looks official. Treating it as
+ * the protocol contract would fold other users' deposits into Herbie's flow.
  */
-export const VENUE_LABELS: Record<string, string> = {
-  // Herbie's **own** ether.fi Cash deposit contract — not a protocol-level
-  // address. Verified: `isTopUpContract()` is true and its owner is ether.fi's
-  // TopUpSourceFactory, which has deployed ~84k sibling proxies; they all
-  // delegate to the shared `TopUpV2` beacon, which is why the implementation
-  // name looks official. Deterministic salt reuse gives the same address on
-  // several chains. Treating it as the protocol contract would fold other
-  // users' deposits into his flow.
-  '0x9b207ee583b5ac75b65756c463d63a970b85cf4b': 'ether.fi Cash top-up',
-}
+export const VENUE_LABELS: Record<string, string> = Object.fromEntries(
+  (process.env.SPARK_VENUE_LABELS ?? '')
+    .split(',')
+    .map((entry) => entry.split('='))
+    .filter((p): p is [string, string] => p.length === 2 && /^0x[a-fA-F0-9]{40}$/.test(p[0]!.trim()))
+    .map(([address, label]) => [address.trim().toLowerCase(), label.trim()]),
+)
 
 /**
  * Hyperliquid coin -> Wealthfolio symbol. Hyperliquid's spot BTC and ETH are the
