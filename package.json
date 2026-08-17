@@ -9,7 +9,8 @@
     "track": "bun run src/index.ts track",
     "watch": "bun run src/index.ts watch",
     "movements": "bun run src/index.ts movements",
-    "ledger": "bun run src/index.ts ledger"
+    "ledger": "bun run src/index.ts ledger",
+    "resolve-symbols": "bun run src/index.ts resolve-symbols"
   },
   "dependencies": {
     "hono": "^4.13.2",

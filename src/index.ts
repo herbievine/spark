@@ -129,6 +129,17 @@ if (process.argv[2] === 'import-plan') {
   process.exit(0)
 }
 
+// `resolve-symbols` — recover token names on rows captured before the contract
+// was known. Safe to re-run; it only touches UNKNOWN: stubs.
+if (process.argv[2] === 'resolve-symbols') {
+  const { resolveSymbols } = await import('./resolve-symbols')
+  const r = await resolveSymbols(statePath())
+  console.log(`contracts seen ${r.contractsSeen}, resolved ${r.contractsResolved}, rows updated ${r.rowsUpdated}`)
+  for (const f of r.failures.slice(0, 10)) console.log(`  ! ${f}`)
+  if (r.failures.length > 10) console.log(`  … ${r.failures.length - 10} more`)
+  process.exit(0)
+}
+
 if (process.argv[2] === 'movements') {
   const state = new SparkState(statePath())
   const { accounts } = loadAddressBook(dbPath())
