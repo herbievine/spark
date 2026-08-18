@@ -13,6 +13,9 @@
     "resolve-symbols": "bun run src/index.ts resolve-symbols"
   },
   "dependencies": {
+    "@noble/hashes": "^2.3.0",
+    "@scure/base": "^2.3.0",
+    "@scure/bip32": "^2.3.0",
     "hono": "^4.13.2",
     "viem": "^2.55.16"
   },
