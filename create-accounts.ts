@@ -31,6 +31,9 @@ const WANTED = [
   // Herbie's own ether.fi Cash top-up proxy, not the protocol's shared address.
   { name: 'ether.fi Cash', accountNumber: addressOf('ether.fi Cash') },
   { name: 'MEXC', accountNumber: null },
+  // Bitcoin is a wallet, not a venue, but it has no single address to record —
+  // it is a zpub deriving many, so the account number stays empty.
+  { name: 'Bitcoin', accountNumber: null },
   { name: 'Coinbase', accountNumber: null },
   { name: 'Binance', accountNumber: null },
 ]
