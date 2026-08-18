@@ -25,6 +25,9 @@ export const TRACKING_START = process.env.SPARK_TRACKING_START
   ? Date.parse(process.env.SPARK_TRACKING_START) / 1000
   : Date.UTC(2026, 0, 1) / 1000
 
+/** Reserved cursor key holding the last scan *attempt* time, not a block. */
+const ATTEMPT_KEY = '#scan-attempt'
+
 export type TrackResult = {
   startedAt: string
   newTransfers: number
@@ -50,8 +53,22 @@ export async function track(opts: { dbPath: string; statePath: string }): Promis
   // Hyperliquid is a venue with its own API, not an address to scan for logs.
   const addresses = accounts.filter((a) => a.venue !== 'hyperliquid')
 
+  const nowSeconds = Math.floor(Date.now() / 1000)
+
   for (const chain of CHAINS) {
     if (!chain.logRpc) continue
+
+    // Chains that throttle need a floor between scans. The attempt time is kept
+    // in the cursor table under a reserved address, so a failed scan still
+    // counts as an attempt — otherwise a throttled chain would be retried every
+    // cycle, which is exactly what caused the throttling.
+    if (chain.scanIntervalMs) {
+      const lastAttempt = state.getCursor(chain.id, ATTEMPT_KEY)
+      if (lastAttempt !== null && nowSeconds - lastAttempt < chain.scanIntervalMs / 1000) {
+        continue
+      }
+      state.setCursor(chain.id, ATTEMPT_KEY, nowSeconds)
+    }
 
     for (const account of addresses) {
       try {

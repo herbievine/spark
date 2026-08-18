@@ -32,6 +32,15 @@ export type Chain = {
    */
   logPaceMs?: number
   /**
+   * Shortest gap between scans of this chain.
+   *
+   * Base's Blockscout throttles hard enough that scanning seven addresses every
+   * five minutes fails every single cycle — the cursors correctly refuse to
+   * advance, so nothing is lost, but nothing new is seen either. Scanning it
+   * less often is what actually gets the data through.
+   */
+  scanIntervalMs?: number
+  /**
    * Blockscout-style, Etherscan-compatible API — keyless. The only way to see
    * **native** transfers: they emit no log, so `eth_getLogs` cannot find them,
    * and no RPC method lists transactions by address. Also yields gas spend.
@@ -92,6 +101,7 @@ export const CHAINS: Chain[] = [
     id: 8453,
     name: 'Base',
     explorerApi: 'https://base.blockscout.com/api',
+    scanIntervalMs: 30 * 60 * 1000,
     logRpc: 'https://mainnet.base.org',
     logChunk: 9000,
     rpc: 'https://base-rpc.publicnode.com',
