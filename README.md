@@ -3,8 +3,13 @@
 Tracks on-chain wallet movements and reconciles them against self-hosted
 [Wealthfolio](https://wealthfolio.app). Runs as a sidecar beside it.
 
-Reads six chains plus Hyperliquid, classifies every transfer (internal move,
-swap, redemption, exchange, spam, spoof), and reports where the numbers disagree.
+Reads ten EVM chains, Bitcoin and Hyperliquid, plus Coinbase and Binance
+exports, classifies every transfer (internal move, swap, redemption, exchange,
+spam, spoof), and reports where the numbers disagree.
+
+Both sides of a movement are booked where they belong: an exchange withdrawal
+sits in the exchange account and the transfer that arrives sits in the wallet —
+double-entry rather than duplication.
 
 ## Quick start
 
@@ -38,6 +43,7 @@ separate volume.
 | Ledger | `ledger` | where did the money go |
 | Drift | `report` | does Wealthfolio agree with the chain |
 | Positions | `defi` | what is held inside protocols |
+| Verify | `verify-transfers` | does the chain actually contain what the explorer claimed |
 
 ## How it reads data
 
@@ -46,8 +52,11 @@ separate volume.
   trades settled by a third party such as CoW Protocol.
 - **Balances and protocol positions** come from contract calls over public RPC.
   No API keys, no paid providers.
+- **Bitcoin** is derived from a watch-only extended public key and walked under
+  the BIP44 gap limit; Esplora serves it without a key.
 - **Wealthfolio** is read over MCP, plus one read-only SQLite lookup for the
-  wallet addresses it stores but does not expose over the API.
+  wallet addresses it stores but does not expose over the API. Writing needs REST
+  with a session cookie, because MCP exposes no way to delete an activity.
 
 ## Safety
 
@@ -64,6 +73,11 @@ balance.
 
 ## Configuration
 
-Chains and tokens live in `src/chains.ts`; accounts and counterparties in
-`src/config.ts`. See [NOTES.md](NOTES.md) for the details — provider quirks,
-classification rules, and the traps found building this.
+Chains and tokens live in `src/chains.ts`. Addresses, venue labels and keys are
+**never committed** — they come from the environment (`SPARK_WALLETS`,
+`SPARK_VENUE_LABELS`, `SPARK_BTC_ZPUB`), because publishing them here would tie a
+named account to every transaction those wallets ever make.
+
+[CLAUDE.md](CLAUDE.md) is the operating manual: commands, order of operations and
+the traps already paid for. [NOTES.md](NOTES.md) explains why the design is what
+it is.

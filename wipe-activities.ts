@@ -16,7 +16,11 @@
 
 export {}
 
-const WF = process.env.SPARK_WF_URL ?? 'https://wealth.herbievine.com'
+const WF = process.env.SPARK_WF_URL
+if (!WF) {
+  console.error('set SPARK_WF_URL')
+  process.exit(1)
+}
 const COMMIT = process.env.SPARK_COMMIT === '1'
 
 /**

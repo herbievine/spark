@@ -11,7 +11,11 @@
 
 export {}
 
-const WF = process.env.SPARK_WF_URL ?? 'https://wealth.herbievine.com'
+const WF = process.env.SPARK_WF_URL
+if (!WF) {
+  console.error('set SPARK_WF_URL')
+  process.exit(1)
+}
 
 /**
  * Accounts to ensure exist. Addresses come from `SPARK_WALLETS` rather than from
