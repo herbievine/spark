@@ -23,8 +23,10 @@ bun run report            # drift vs Wealthfolio
 bun run verify            # assert the token registry is correct
 ```
 
-`bun run watch` runs the scan on a loop and serves HTTP:
-`/health`, `/report`, `/defi`, `/movements`, `/ledger`, `/tracker`.
+`bun run serve` serves HTTP: `/health`, `/report`, `/defi`, `/movements`,
+`/ledger`, `/tracker`, plus `POST /track` to run one scan. In production a cron
+sidecar calls `POST /track` every five minutes; `bun run watch` still scans on
+an in-process loop where no scheduler is available.
 
 ## Deploy
 
@@ -39,7 +41,7 @@ separate volume.
 
 | Job | Command | Question it answers |
 |---|---|---|
-| Track | `track` / `watch` | what moved, and when |
+| Track | `track` / `POST /track` | what moved, and when |
 | Ledger | `ledger` | where did the money go |
 | Drift | `report` | does Wealthfolio agree with the chain |
 | Positions | `defi` | what is held inside protocols |

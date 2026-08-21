@@ -14,4 +14,5 @@ ENV SPARK_WF_DB_PATH=/data/wealthfolio.db \
     SPARK_PORT=3000
 
 EXPOSE 3000
-CMD ["bun", "run", "src/index.ts", "watch"]
+# Serves only; the spark-cron sidecar drives scans over POST /track.
+CMD ["bun", "run", "src/index.ts", "serve"]

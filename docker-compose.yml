@@ -20,11 +20,47 @@ services:
     environment:
       TZ: Europe/Paris
       SPARK_WF_URL: "http://wealthfolio:8088"
-      SPARK_INTERVAL_MS: "300000"
     security_opt:
       - no-new-privileges:true
-    # The watch loop logs every scan, forever. Without rotation the default
-    # json-file driver grows unbounded on a box meant to run unattended.
+    healthcheck:
+      test: ["CMD", "bun", "-e", "fetch('http://localhost:3000/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # Scans on a schedule, from outside the process that does the scanning.
+  #
+  # Spark used to run its own `setInterval`, which cannot be seen from outside:
+  # a scan blocked on a socket that never closes stops every later scan while
+  # the container still reports healthy. crond calling an HTTP endpoint gets a
+  # status code and a bounded runtime per scan, and `docker logs` becomes a scan
+  # history. Same shape as the tessera cron sidecar on this host.
+  #
+  # --max-time is the point of the exercise: a scan that outlives its own
+  # schedule is abandoned, and /track refuses to start a second one on top.
+  spark-cron:
+    image: alpine:3.20
+    container_name: spark-cron
+    restart: unless-stopped
+    networks: [edge]
+    depends_on: [spark]
+    env_file: [.env]
+    environment:
+      TZ: Europe/Paris
+    security_opt:
+      - no-new-privileges:true
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        apk add --no-cache curl >/dev/null
+        printf '*/5 * * * * curl -sS -m 250 -o /dev/null -w "track %%{http_code} %%{time_total}s\\n" -X POST http://spark:3000/track -H "Authorization: Bearer %s"\n' "$$SPARK_CRON_TOKEN" > /etc/crontabs/root
+        crond -f -l 8
     logging:
       driver: json-file
       options:

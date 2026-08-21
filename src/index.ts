@@ -43,6 +43,50 @@ const app = new Hono()
 
 app.get('/health', (c) => c.json({ ok: true }))
 
+/**
+ * Run one scan, for an external scheduler to call.
+ *
+ * The alternative — an in-process `setInterval` — cannot be observed or
+ * recovered from outside the process: a scan that hangs on a socket that never
+ * closes stops every future scan silently, and the container stays "up" and
+ * healthy throughout. A scheduler that calls this gets a status code, a
+ * timeout, and a log line per run.
+ *
+ * Guarded by a shared token, because a scan is expensive enough that an open
+ * endpoint on a shared network is a denial-of-service lever. Overlapping runs
+ * are refused rather than queued: they would race on the same cursors, and a
+ * scan that is still going is not one that needs starting again.
+ */
+let scanning: Promise<unknown> | null = null
+
+app.post('/track', async (c) => {
+  const expected = process.env.SPARK_CRON_TOKEN
+  if (!expected) return c.json({ error: 'SPARK_CRON_TOKEN is not set' }, 503)
+  if (c.req.header('authorization') !== `Bearer ${expected}`) return c.json({ error: 'unauthorized' }, 401)
+
+  if (scanning) return c.json({ skipped: 'a scan is already running' }, 409)
+
+  const started = Date.now()
+  const run = track(trackOpts())
+  scanning = run
+  try {
+    const result = await run
+    const ms = Date.now() - started
+    // One line per run, so `docker logs` is a scan history rather than a wall
+    // of block ranges that are almost always unchanged.
+    console.log(
+      `[${result.startedAt}] scan ${ms}ms — ${result.newTransfers} new, ${result.errors.length} error(s)`,
+    )
+    for (const e of result.errors) console.log(`  ! ${e}`)
+    return c.json({ ms, newTransfers: result.newTransfers, errors: result.errors })
+  } catch (err) {
+    console.error(`[${new Date().toISOString()}] scan failed: ${(err as Error).message}`)
+    return c.json({ error: (err as Error).message }, 500)
+  } finally {
+    scanning = null
+  }
+})
+
 app.get('/report', async (c) => {
   const report = await buildReport(config())
   if (c.req.query('format') === 'json') return c.json(report)
@@ -172,8 +216,15 @@ if (process.argv[2] === 'track') {
   process.exit(0)
 }
 
-// Long-running: scan on an interval. This is the process that must stay up for
-// movements to be captured at all.
+// Serve the HTTP surface and nothing else. What the container runs: scans are
+// driven by the cron sidecar calling POST /track, so a hung scan cannot take
+// the next one down with it.
+if (process.argv[2] === 'serve') {
+  console.log(`Spark serving on :${process.env.SPARK_PORT ?? 3000} — scans come from POST /track`)
+}
+
+// Long-running: scan on an interval, in-process. Superseded by `serve` plus the
+// cron sidecar, and kept for running the tracker without a scheduler beside it.
 if (process.argv[2] === 'watch') {
   const intervalMs = Number(process.env.SPARK_INTERVAL_MS ?? 5 * 60 * 1000)
   console.log(`Spark tracker watching every ${Math.round(intervalMs / 1000)}s`)
@@ -214,5 +265,12 @@ export default {
   // Every knob is SPARK_-prefixed so Spark's configuration is unambiguous in a
   // shared environment; PORT alone is too generic to own.
   port: Number(process.env.SPARK_PORT ?? 3000),
+  /**
+   * Bun closes an idle connection after 10 seconds by default, which is shorter
+   * than a cold scan: POST /track answered nothing at all until this was set,
+   * because the socket was gone before the scan finished. 255 is the ceiling
+   * Bun accepts, and the scheduler's own `--max-time` sits just inside it.
+   */
+  idleTimeout: 255,
   fetch: app.fetch,
 }

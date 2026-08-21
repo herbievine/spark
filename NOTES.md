@@ -10,7 +10,8 @@ self-hosted Wealthfolio. Runs beside Wealthfolio as a sidecar.
 ```sh
 bun install
 bun run track           # Job C: scan for new movements once
-bun run watch           # ...or continuously (this is what runs in production)
+bun run serve           # HTTP only; POST /track runs a scan (production)
+bun run watch           # ...or scan on an in-process loop, without a scheduler
 bun run movements       # what was captured, classified
 bun run report          # Job A: quantity drift vs Wealthfolio
 bun run defi            # Job B: protocol positions in USD
@@ -30,8 +31,15 @@ cd ~/spark && git pull && docker compose up -d --build
 docker logs -f spark
 ```
 
-`SPARK_INTERVAL_MS` (default 300000) sets the scan cadence. The container runs
-`watch`, which scans on that interval *and* serves the HTTP surface.
+The `spark` container runs `serve` and scans nothing on its own; the
+`spark-cron` sidecar calls `POST /track` every five minutes, guarded by
+`SPARK_CRON_TOKEN`. Scheduling from outside the process is what makes a hung
+scan visible: an in-process interval that blocks on a socket stops every later
+scan while the container still reports healthy, whereas cron gets a status code
+and `--max-time` per run, and `/track` answers 409 rather than starting a second
+scan over the top of one still running.
+
+`SPARK_INTERVAL_MS` (default 300000) still sets the cadence for `watch`.
 
 The Wealthfolio token lives in `~/spark/.env` (mode 0600, `env_file` in
 compose — never baked into the image, and untouched by `git pull` since it's
@@ -76,7 +84,8 @@ Consequences of that:
   interrupted backfill resumes instead of restarting.
 - **A failed range never advances the cursor** — the gap is retried rather than
   skipped, because a silently skipped range is a movement lost for good.
-- The `watch` loop never exits on error. A crash stops capture.
+- A scan that fails leaves its cursors alone and is retried on the next tick;
+  `spark-cron` keeps calling `/track` regardless of what the last run returned.
 
 ### It scans logs, not transaction lists
 

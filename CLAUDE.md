@@ -21,6 +21,7 @@ extended public keys and tokens live outside it:
 | What | Where |
 |---|---|
 | Wallet list, venue labels, `SPARK_BTC_ZPUB` | `.local/wallets.env` (gitignored) |
+| `SPARK_CRON_TOKEN` (scheduler -> `POST /track`) | `.env` on the server |
 | Wealthfolio password | macOS Keychain, service `wealthfolio` |
 | Wealthfolio agent token (MCP) | macOS Keychain, service `spark-wf-token` |
 
@@ -117,7 +118,8 @@ Runs on the server at `~/spark`, container `spark`, state in the
 
 ```sh
 ssh <server> 'cd ~/spark && git pull && docker compose up -d --build'
-ssh <server> 'docker logs --tail 40 spark'
+ssh <server> 'docker logs --tail 40 spark'        # scans, one line each
+ssh <server> 'docker logs --tail 20 spark-cron'   # the schedule firing
 ```
 
 If you fix data locally, **push the state database back**, or the server will
