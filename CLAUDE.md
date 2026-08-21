@@ -111,13 +111,12 @@ lag activities** — if a balance looks stale, recalculate and wait before belie
 
 ## Deployment
 
-Runs on the server at `/srv/spark`, container `spark`, state in the
-`spark_spark-state` volume.
+Runs on the server at `~/spark`, container `spark`, state in the
+`spark_spark-state` volume. Deployed via git, not a working-tree copy — push to
+`origin/main` first, then pull on the server.
 
 ```sh
-rsync -az --delete --exclude '.env' --exclude '.local' --exclude 'ledger' \
-      --exclude 'backups' --exclude 'node_modules' --exclude '.git' ./ <server>:/srv/spark/
-ssh <server> 'cd /srv/spark && docker compose up -d --build'
+ssh <server> 'cd ~/spark && git pull && docker compose up -d --build'
 ssh <server> 'docker logs --tail 40 spark'
 ```
 

@@ -22,19 +22,20 @@ Endpoints: `GET /health`, `/report`, `/defi`, `/movements`, `/tracker`
 
 ## Deployment
 
-Runs on the server as a sidecar beside Wealthfolio, on the shared `edge` network:
+Runs on the server as a sidecar beside Wealthfolio, on the shared `edge` network,
+deployed via `git pull` (push to `origin/main` first):
 
 ```sh
-cd /srv/spark && docker compose up -d --build
+cd ~/spark && git pull && docker compose up -d --build
 docker logs -f spark
 ```
 
 `SPARK_INTERVAL_MS` (default 300000) sets the scan cadence. The container runs
 `watch`, which scans on that interval *and* serves the HTTP surface.
 
-The Wealthfolio token lives in `/srv/spark/.env` (mode 0600, `env_file`
-in compose — never baked into the image). Note `rsync --delete` from a dev
-machine will remove it unless `--exclude .env` is passed.
+The Wealthfolio token lives in `~/spark/.env` (mode 0600, `env_file` in
+compose — never baked into the image, and untouched by `git pull` since it's
+gitignored).
 
 ### Checking on it
 
