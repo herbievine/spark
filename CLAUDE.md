@@ -62,7 +62,8 @@ Root scripts, in the order a full rebuild uses them:
 | `importplan.ts` | Imports a plan file (`SPARK_PLAN_OUT`) via MCP. |
 | `create-accounts.ts` | Creates missing Wealthfolio accounts, idempotent. |
 | `venues.ts` | Normalises Coinbase/Binance/peer.xyz and matches each record to a chain transfer. |
-| `import-venues.ts` | Books exchange records into their own accounts. |
+| `import-venues.ts` | Books exchange records into their own accounts, typed per operation (income/trade/transfer), not by the sign of the quantity. |
+| `link-transfers.ts` | Pairs the two sides of an internal transfer, and confirms the rest as external. Idempotent. |
 | `scan-bitcoin.ts` / `import-bitcoin.ts` | Derives the BIP84 wallet from the zpub and books it. |
 | `flag-unknown.ts` | Counterparties Spark cannot name, with explorer lookups. |
 | `tax-2025.ts` | French capital-gains reconstruction (art. 150 VH bis). |
@@ -107,6 +108,23 @@ lag activities** — if a balance looks stale, recalculate and wait before belie
 - **Some contracts mirror another's events.** Monerium's old EURe emits the same
   transfer as the new one and reports the same balance; `historic: true` keeps it
   for symbol resolution while excluding it from balances and the ledger.
+- **A venue row is not a transfer just because a quantity moved.** Booking
+  Binance by the sign alone made 1,711 of its 1,776 rows — Simple Earn interest,
+  converts, auto-invest — look like money entering the portfolio, inflating
+  contributions and destroying the return. Only 65 were ever transfers. The
+  operation name decides the activity type; an unmapped one is refused, not
+  guessed.
+- **Asset-denominated income is `INTEREST` with subtype `STAKING_REWARD`.** Plain
+  `INTEREST` is a cash row and would credit the return without ever delivering
+  the coins. The subtype carries symbol, quantity and price.
+- **Wealthfolio will not link transfer legs of different quantities** — it
+  refuses with "Security transfer legs use different quantities". An exchange
+  withdrawal, where the fee makes the arriving amount smaller, therefore cannot
+  be paired at all; confirm it external instead.
+- **Merging same-day rows inherits the *first* timestamp**, which silently
+  reorders a day: Coinbase's 16:57 send merged with a 13:00 one and landed
+  before the 16:56 receive that funded it, dipping -3,000 and getting clamped.
+  Merged acquisitions are dated to the open and disposals to the close.
 - **Base's Blockscout throttles hard.** It has a 30-minute `scanIntervalMs`; the
   attempt time is recorded even on failure, or a throttled chain retries forever.
 
