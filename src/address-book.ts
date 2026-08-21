@@ -82,12 +82,13 @@ export function loadAddressBook(dbPath: string): AddressBook {
         continue
       }
 
-      if (row.account_number?.trim() && ADDRESS_OVERRIDES[name]) {
-        // Wealthfolio has since been filled in; the override is now redundant and
-        // could drift away from the real value.
+      const override = ADDRESS_OVERRIDES[name]
+      if (row.account_number?.trim() && override && row.account_number.trim().toLowerCase() !== override.toLowerCase()) {
+        // Both exist and disagree: scanning would use whichever wins the `||`
+        // above, silently, while the other source names a different address.
         issues.push({
           account: name,
-          problem: 'account_number is now set — remove the override in config.ts',
+          problem: `account_number (${row.account_number.trim()}) disagrees with the configured address (${override})`,
         })
       }
 
