@@ -23,6 +23,37 @@ export type TokenBalance = {
 
 export type RegistryProblem = { chainId: number; symbol: string; problem: string }
 
+/**
+ * `decimals()` per token, remembered for the life of the process.
+ *
+ * ERC-20 decimals is immutable — the standard gives it no setter — yet it was
+ * being read alongside every balance, which is one wasted round trip per token
+ * per address on every scan: sixty registered tokens across seven wallets is
+ * 420 calls to learn sixty constants. The whole balance phase was 22 of the
+ * scan's 39 seconds.
+ *
+ * The *promise* is cached rather than the value, so the seven addresses that
+ * start at once share one in-flight request instead of racing to make seven.
+ * A rejection is evicted, so a transient RPC failure is retried next scan
+ * rather than poisoning the entry until restart.
+ */
+const decimalsCache = new Map<string, Promise<number>>()
+
+function tokenDecimals(client: PublicClient, token: { chainId: number; address: `0x${string}` }): Promise<number> {
+  const key = `${token.chainId}:${token.address.toLowerCase()}`
+  let pending = decimalsCache.get(key)
+  if (!pending) {
+    pending = client
+      .readContract({ address: token.address, abi: erc20Abi, functionName: 'decimals' })
+      .catch((err) => {
+        decimalsCache.delete(key)
+        throw err
+      })
+    decimalsCache.set(key, pending)
+  }
+  return pending
+}
+
 export class Wallet {
   private readonly clients = new Map<number, PublicClient>()
 
@@ -34,7 +65,24 @@ export class Wallet {
   private client(chain: Chain): PublicClient {
     let client = this.clients.get(chain.id)
     if (!client) {
-      client = createPublicClient({ transport: http(chain.rpc) }) as PublicClient
+      client = createPublicClient({
+        transport: http(chain.rpc),
+        // Aggregate the reads into Multicall3 rather than firing one request per
+        // token. Sixty tokens across seven addresses is over four hundred
+        // `eth_call`s a scan, which public endpoints rate-limit — the balance
+        // phase was slower run in parallel than in series because of it. Batched
+        // it is a handful of calls per chain. Verified present at the canonical
+        // address on all ten chains; viem only batches when it knows the
+        // deployment, which is why the chain stub below exists at all.
+        batch: { multicall: { wait: 20 } },
+        chain: {
+          id: chain.id,
+          name: chain.name,
+          nativeCurrency: { name: chain.native, symbol: chain.native, decimals: 18 },
+          rpcUrls: { default: { http: [chain.rpc] } },
+          contracts: { multicall3: { address: '0xcA11bde05977b3631167028862bE2a173976CA11' } },
+        },
+      }) as PublicClient
       this.clients.set(chain.id, client)
     }
     return client
@@ -78,7 +126,7 @@ export class Wallet {
                   functionName: 'balanceOf',
                   args: [this.address],
                 }),
-                client.readContract({ address: token.address, abi: erc20Abi, functionName: 'decimals' }),
+                tokenDecimals(client, token),
               ])
               const quantity = Number(formatUnits(raw, decimals))
               if (quantity > 0) {
