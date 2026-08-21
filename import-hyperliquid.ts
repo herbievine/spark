@@ -1,30 +1,32 @@
 /**
- * Book new Hyperliquid activity from fresh CSV exports on top of what is
- * already there.
+ * Book new Hyperliquid activity, read from the venue's own Info API.
  *
- * Unlike the wallet accounts, Hyperliquid's existing history did not come from
- * Spark and is not wiped and replaced — see wipe-activities.ts. Instead this
- * appends: it reads what is already booked, finds the latest already-covered
- * moment in each of the three export files (deposits/withdrawals, funding,
- * trades), and only books what comes after. Re-running with the same or an
- * older export is a no-op.
+ * This replaced a CSV-driven version, because a CSV is stale the moment it is
+ * exported: the first run of this script found a closed CASHCAT position worth
+ * 556.65 USDC that a five-hour-old export could not have contained. The Info
+ * API is keyless, needs no login, and serves the same records the exports are
+ * built from, so there is nothing to download by hand and nothing to go stale.
+ *
+ * Unlike the wallet accounts, Hyperliquid's history did not come from Spark and
+ * is not wiped and replaced — see wipe-activities.ts. This appends: it reads
+ * what is already booked, takes the latest already-covered moment in each
+ * category, and books only what is newer. Re-running changes nothing.
  *
  * A perp position is not an owned asset, so a trade never becomes a BUY/SELL —
  * only its fee (always) and its realised pnl (only on a close or a flip; an
  * open's closedPnl is just -fee and would double-book the fee as a loss) become
- * their own cash activities. A spot fill (dir "Buy"/"Sell") is the rare
- * exception and is refused rather than guessed at, since it needs the same
- * disambiguated symbol lookup `HL_SYMBOLS` exists for and none has been seen
- * since the account's early days.
+ * cash activities. A spot fill is refused rather than guessed at, since it needs
+ * the disambiguated symbol lookup `HL_SYMBOLS` exists for.
  *
- * CSV times are Hyperliquid's local display timezone (Europe/Paris, matching
- * this deployment); Wealthfolio activities are booked in UTC.
+ * Unrealised pnl on open positions is booked separately and refreshed on every
+ * run — see `syncUnrealised` below for why that is a single replaceable row
+ * rather than an append.
  *
  * Dry run unless SPARK_COMMIT=1.
  */
 
-import { readFileSync } from 'node:fs'
 import { Wealthfolio } from './src/wealthfolio'
+import { Hyperliquid } from './src/hyperliquid'
 
 const COMMIT = process.env.SPARK_COMMIT === '1'
 const WF = process.env.SPARK_WF_URL
@@ -32,49 +34,28 @@ if (!WF) { console.error('set SPARK_WF_URL'); process.exit(1) }
 const password = process.env.SPARK_WF_PASSWORD
 if (!password) { console.error('set SPARK_WF_PASSWORD'); process.exit(1) }
 
-const TZ = 'Europe/Paris'
+const ADDRESS = (process.env.SPARK_WALLETS ?? '')
+  .split(',')
+  .map((e) => e.split(':'))
+  .find((p) => p[1]?.trim() === 'hyperliquid')?.[2]
+  ?.trim()
+if (!ADDRESS) { console.error('no hyperliquid wallet in SPARK_WALLETS'); process.exit(1) }
 
-/** Local wall-clock time in `TZ`, converted to a UTC ISO instant. */
-function toUtcIso(local: string): string {
-  const [d, t] = local.split(' - ')
-  const [m, day, y] = d!.split('/').map(Number)
-  const [hh, mm, ss] = t!.split(':').map(Number)
-  const guess = Date.UTC(y!, m! - 1, day!, hh!, mm!, ss!)
-  const dtf = new Intl.DateTimeFormat('en-US', {
-    timeZone: TZ, hourCycle: 'h23',
-    year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit',
+/** Marks the one row that carries unrealised pnl, so it can be found and replaced. */
+const UNREALISED_COMMENT = 'unrealised perp pnl (refreshed each sync)'
+
+const INFO_URL = 'https://api.hyperliquid.xyz/info'
+async function info<T>(body: Record<string, unknown>): Promise<T> {
+  const res = await fetch(INFO_URL, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(body),
   })
-  const p = Object.fromEntries(dtf.formatToParts(guess).map((x) => [x.type, x.value]))
-  const asIfUtc = Date.UTC(+p.year!, +p.month! - 1, +p.day!, +p.hour!, +p.minute!, +p.second!)
-  const offsetMs = asIfUtc - guess
-  return new Date(guess - offsetMs).toISOString()
+  if (!res.ok) throw new Error(`Hyperliquid ${body.type} failed: ${res.status}`)
+  return (await res.json()) as T
 }
 
-/** "1273.25 USDC" / "-4072.24 USDC" / "0.0594  ETH" -> { value, unit }. */
-function parseAmount(s: string): { value: number; unit: string } {
-  const parts = s.trim().split(/\s+/)
-  return { value: Number(parts[0]), unit: parts[1] ?? '' }
-}
-
-function csv(path: string): Record<string, string>[] {
-  const lines = readFileSync(path, 'utf8').trim().split('\n')
-  const header = lines[0]!.split(',')
-  return lines.slice(1).map((l) => {
-    const cells = l.split(',')
-    const row: Record<string, string> = {}
-    header.forEach((h, i) => (row[h] = cells[i] ?? ''))
-    return row
-  })
-}
-
-/** Every Hyperliquid cash activity books as quantity 1 @ unitPrice 1, so `amount` is the value. */
-type Planned = {
-  date: string
-  activityType: string
-  amount: number
-  currency: string
-  comment: string
-}
+type Planned = { date: string; activityType: string; amount: number; currency: string; comment: string }
 
 // -------------------------------------------------------- existing activities
 const wf = new Wealthfolio(WF, process.env.SPARK_WF_TOKEN!)
@@ -97,114 +78,235 @@ async function api<T>(path: string, body?: unknown): Promise<T> {
 }
 await api('/api/v1/auth/login', { password })
 
-const existing: { date: string; activityType: string; comment: string | null }[] = []
+type Existing = { id: string; date: string; activityType: string; comment: string | null }
+const existing: Existing[] = []
 for (let page = 0; ; page++) {
   const res = await api<{ data: any[] }>('/api/v1/activities/search', {
     page, pageSize: 200, accountIdFilter: [accountId], sort: { id: 'date', desc: false },
   })
   const rows = res.data ?? []
   if (!rows.length) break
-  for (const r of rows) existing.push({ date: r.date, activityType: r.activityType, comment: r.comment })
+  for (const r of rows) existing.push({ id: r.id, date: r.date, activityType: r.activityType, comment: r.comment })
   if (rows.length < 200) break
 }
 
-const maxWhere = (pred: (r: (typeof existing)[number]) => boolean) =>
-  existing.filter(pred).map((r) => r.date).sort().at(-1) ?? '1970-01-01T00:00:00Z'
+/** Latest booked instant in a category, as epoch ms. 0 when the category is empty. */
+const cutoff = (pred: (r: Existing) => boolean): number => {
+  const dates = existing.filter(pred).map((r) => Date.parse(r.date))
+  return dates.length ? Math.max(...dates) : 0
+}
 
-const dwCutoff = maxWhere((r) => (r.comment ?? '').startsWith('deposit ') || (r.comment ?? '').startsWith('withdrawal '))
-const fundingCutoff = maxWhere((r) => (r.comment ?? '').startsWith('funding '))
-const tradeCutoff = maxWhere((r) => (r.comment ?? '').startsWith('perp ') || (r.comment === null && ['BUY', 'SELL', 'TRANSFER_IN'].includes(r.activityType)))
+const isUnrealised = (r: Existing) => r.comment === UNREALISED_COMMENT
+const ledgerCutoff = cutoff((r) => (r.comment ?? '').startsWith('deposit ') || (r.comment ?? '').startsWith('withdrawal '))
+const fundingCutoff = cutoff((r) => (r.comment ?? '').startsWith('funding '))
+const tradeCutoff = cutoff(
+  (r) => (r.comment ?? '').startsWith('perp ') ||
+    (r.comment === null && ['BUY', 'SELL', 'TRANSFER_IN'].includes(r.activityType)),
+)
 
-console.log(`cutoffs — deposits/withdrawals ${dwCutoff}, funding ${fundingCutoff}, trades ${tradeCutoff}`)
+const iso = (ms: number) => new Date(ms).toISOString()
+console.log(`cutoffs — ledger ${iso(ledgerCutoff)}, funding ${iso(fundingCutoff)}, trades ${iso(tradeCutoff)}`)
 
-// -------------------------------------------------------------------- deposits/withdrawals
 const plan: Planned[] = []
 const skipped = new Map<string, number>()
 const skip = (why: string) => skipped.set(why, (skipped.get(why) ?? 0) + 1)
 
-for (const r of csv('ledger/hyperliquid-deposits.csv')) {
-  const date = toUtcIso(r.time!)
-  if (Date.parse(date) <= Date.parse(dwCutoff)) continue
-  const change = parseAmount(r.accountValueChange!)
-  if (r.action === 'deposit') {
-    if (change.unit !== 'USDC') { skip(`deposit in non-USDC unit: ${change.unit}`); continue }
-    plan.push({ date, activityType: 'DEPOSIT', amount: Math.abs(change.value), currency: 'USD', comment: `deposit ${r.source}->${r.destination}` })
-  } else if (r.action === 'withdrawal') {
-    if (change.unit !== 'USDC') { skip(`withdrawal in non-USDC unit: ${change.unit}`); continue }
-    plan.push({ date, activityType: 'WITHDRAWAL', amount: Math.abs(change.value), currency: 'USD', comment: `withdrawal ${r.source}->${r.destination}` })
-  } else if (r.action === 'transfer') {
-    // Between Hyperliquid's own spot and perp sub-wallets: nets to zero within
-    // the one Wealthfolio account they share, so there is nothing to book.
-    continue
-  } else {
-    skip(`unhandled deposits/withdrawals action: ${r.action} (${change.value} ${change.unit})`)
-  }
+// ------------------------------------------------------------------- fills
+/**
+ * Fills come in pages of at most 2,000, newest last. One order routinely
+ * produces several fills at the same instant, which Wealthfolio would see as
+ * same-day duplicates, so they are summed per (second, coin, direction) — the
+ * "(N fills)" note matches how the pre-existing rows were labelled.
+ */
+type Fill = { time: number; coin: string; dir: string; fee: string; closedPnl: string }
+const fills: Fill[] = []
+for (let startTime = tradeCutoff + 1; ; ) {
+  const page = await info<Fill[]>({ type: 'userFillsByTime', user: ADDRESS, startTime })
+  if (!page.length) break
+  fills.push(...page)
+  if (page.length < 2000) break
+  startTime = Math.max(...page.map((f) => f.time)) + 1
 }
 
-// -------------------------------------------------------------------------- funding
-for (const r of csv('ledger/hyperliquid-funding.csv')) {
-  const date = toUtcIso(r.time!)
-  if (Date.parse(date) <= Date.parse(fundingCutoff)) continue
-  const payment = Number(r.payment)
-  if (!Number.isFinite(payment) || payment === 0) continue
-  plan.push({
-    date,
-    activityType: payment > 0 ? 'INTEREST' : 'FEE',
-    amount: Math.abs(payment),
-    currency: 'USD',
-    comment: `funding ${r.coin}`,
-  })
+const grouped = new Map<string, { time: number; coin: string; dir: string; fee: number; pnl: number; n: number }>()
+for (const f of fills) {
+  if (f.time <= tradeCutoff) continue
+  const key = `${Math.floor(f.time / 1000)}|${f.coin}|${f.dir}`
+  const g = grouped.get(key) ?? { time: f.time, coin: f.coin, dir: f.dir, fee: 0, pnl: 0, n: 0 }
+  g.fee += Number(f.fee)
+  g.pnl += Number(f.closedPnl)
+  g.n++
+  grouped.set(key, g)
 }
 
-// ------------------------------------------------------------------------ trades
-for (const r of csv('ledger/hyperliquid-trades.csv')) {
-  const date = toUtcIso(r.time!)
-  if (Date.parse(date) <= Date.parse(tradeCutoff)) continue
-  const dir = r.dir!
-  const fee = Number(r.fee)
-  const closedPnl = Number(r.closedPnl)
-
-  if (dir === 'Buy' || dir === 'Sell') {
-    skip(`spot ${dir} needs a verified symbol lookup, refusing to guess: ${r.coin} ${date}`)
+for (const g of grouped.values()) {
+  if (g.dir === 'Buy' || g.dir === 'Sell') {
+    skip(`spot ${g.dir} needs a verified symbol lookup, refusing to guess: ${g.coin}`)
     continue
   }
-
-  if (Number.isFinite(fee) && fee !== 0) {
-    plan.push({ date, activityType: 'FEE', amount: fee, currency: 'USD', comment: `perp ${r.coin} ${dir} fee` })
+  const date = iso(g.time)
+  const fills = g.n > 1 ? ` (${g.n} fills)` : ''
+  if (g.fee !== 0) {
+    plan.push({ date, activityType: 'FEE', amount: Math.abs(g.fee), currency: 'USD', comment: `perp ${g.coin} ${g.dir} fee${fills}` })
   }
-
-  // An open's closedPnl is just -fee (nothing realised yet); only a close or a
-  // flip realises anything worth booking.
-  if (!dir.startsWith('Open') && Number.isFinite(closedPnl) && closedPnl !== 0) {
+  // An open's closedPnl is only the fee restated; nothing is realised yet.
+  if (!g.dir.startsWith('Open') && g.pnl !== 0) {
     plan.push({
-      date, activityType: closedPnl > 0 ? 'CREDIT' : 'FEE', amount: Math.abs(closedPnl), currency: 'USD',
-      comment: `perp ${r.coin} ${dir} pnl`,
+      date, activityType: g.pnl > 0 ? 'CREDIT' : 'FEE', amount: Math.abs(g.pnl), currency: 'USD',
+      comment: `perp ${g.coin} ${g.dir} pnl${fills}`,
     })
   }
 }
 
-plan.sort((a, b) => a.date.localeCompare(b.date))
+// ----------------------------------------------------------------- funding
+type Funding = { time: number; delta: { coin: string; usdc: string } }
+const funding = await info<Funding[]>({ type: 'userFunding', user: ADDRESS, startTime: fundingCutoff + 1 })
+for (const f of funding) {
+  if (f.time <= fundingCutoff) continue
+  const usdc = Number(f.delta.usdc)
+  if (!Number.isFinite(usdc) || usdc === 0) continue
+  plan.push({
+    date: iso(f.time),
+    activityType: usdc > 0 ? 'INTEREST' : 'FEE',
+    amount: Math.abs(usdc),
+    currency: 'USD',
+    comment: `funding ${f.delta.coin}`,
+  })
+}
 
-console.log(`\nplanned activities: ${plan.length}`)
+// ------------------------------------------------- deposits and withdrawals
+type Ledger = { time: number; delta: { type: string; usdc?: string; amount?: string; token?: string } }
+const ledger = await info<Ledger[]>({ type: 'userNonFundingLedgerUpdates', user: ADDRESS, startTime: ledgerCutoff + 1 })
+for (const l of ledger) {
+  // Compared at second granularity, unlike fills and funding. One arrival is
+  // reported twice by the two sources — the exports call it a `deposit`, the
+  // API a `send` from the bridge — and the API's copy carries sub-second
+  // milliseconds that clear a millisecond cutoff. Wealthfolio stores seconds,
+  // so anything inside the last booked second is already covered.
+  if (Math.floor(l.time / 1000) <= Math.floor(ledgerCutoff / 1000)) continue
+  const type = l.delta.type
+  // Moves between the spot and perp sub-wallets net to zero inside the one
+  // Wealthfolio account they share, so there is nothing to book.
+  if (type === 'internalTransfer' || type === 'accountClassTransfer' || type === 'spotTransfer') continue
+  const usdc = Number(l.delta.usdc ?? l.delta.amount ?? '0')
+  if (!Number.isFinite(usdc) || usdc === 0) { skip(`ledger ${type} with no USDC amount`); continue }
+  if (type === 'deposit') {
+    plan.push({ date: iso(l.time), activityType: 'DEPOSIT', amount: Math.abs(usdc), currency: 'USD', comment: 'deposit arbitrum->trading' })
+  } else if (type === 'withdraw') {
+    plan.push({ date: iso(l.time), activityType: 'WITHDRAWAL', amount: Math.abs(usdc), currency: 'USD', comment: 'withdrawal trading->arbitrum' })
+  } else {
+    skip(`unhandled ledger type: ${type}`)
+  }
+}
+
+/**
+ * Merge rows Wealthfolio would fingerprint as one.
+ *
+ * Duplicates are keyed on the calendar day, so two identical amounts for the
+ * same coin on one day are read as one row repeated and the second is silently
+ * dropped — three funding rows vanished exactly this way before this existed.
+ * Summing keeps the total truthful and presents one row it will accept.
+ */
+const merged = new Map<string, Planned>()
+for (const p of plan) {
+  const key = [p.date.slice(0, 10), p.activityType, p.comment, p.amount.toFixed(6)].join('|')
+  const seen = merged.get(key)
+  if (seen) seen.amount += p.amount
+  else merged.set(key, { ...p })
+}
+const collapsed = plan.length - merged.size
+
+/**
+ * Drop rows already booked, before Wealthfolio has to judge them.
+ *
+ * A cursor sits on a whole second while these events carry milliseconds, so the
+ * last second before a cutoff is re-proposed on every run. Wealthfolio would
+ * refuse those as duplicates and be right — but its fingerprint is the calendar
+ * day, so it would equally refuse a genuinely new row that happens to match an
+ * earlier amount. Filtering here on the exact instant means anything it still
+ * refuses is a real anomaly rather than noise to be scrolled past.
+ */
+const alreadyBooked = new Set(
+  existing.map((r) => [Date.parse(r.date), r.activityType, r.comment].join('|')),
+)
+const finalPlan = [...merged.values()]
+  .filter((p) => {
+    const key = [Math.floor(Date.parse(p.date) / 1000) * 1000, p.activityType, p.comment].join('|')
+    return !alreadyBooked.has(key)
+  })
+  .sort((a, b) => a.date.localeCompare(b.date))
+const preBooked = merged.size - finalPlan.length
+
+console.log(
+  `\nnew activities: ${finalPlan.length}` +
+    `${collapsed ? `  (${collapsed} same-day identical rows merged)` : ''}` +
+    `${preBooked ? `  (${preBooked} already booked)` : ''}`,
+)
 const byType = new Map<string, number>()
-for (const p of plan) byType.set(p.activityType, (byType.get(p.activityType) ?? 0) + 1)
-for (const [t, n] of byType) console.log(`  ${t.padEnd(12)} ${n}`)
+for (const p of finalPlan) byType.set(p.activityType, (byType.get(p.activityType) ?? 0) + 1)
+for (const [t, n] of byType) console.log(`  ${t.padEnd(10)} ${n}`)
 if (skipped.size) {
-  console.log('\nskipped:')
+  console.log('skipped:')
   for (const [why, n] of skipped) console.log(`  ${String(n).padStart(4)}  ${why}`)
 }
 
-if (!plan.length) { console.log('\nnothing new to import'); process.exit(0) }
+/**
+ * Book unrealised pnl as one replaceable row.
+ *
+ * Hyperliquid holds an open position's unrealised pnl inside the margin it
+ * reports, so venue equity includes it while Wealthfolio — which only ever sees
+ * realised events — does not. Left alone the account reads low by exactly that
+ * much: 3,718 against a real 4,862 the day this was written.
+ *
+ * It cannot be appended like everything else, because it is a running mark
+ * rather than an event: the previous row is deleted and a fresh one written on
+ * every sync, so the account always carries today's mark and never a stack of
+ * yesterday's. Deletion is REST-only — MCP exposes no delete.
+ */
+async function syncUnrealised(): Promise<void> {
+  const state = await new Hyperliquid().state(ADDRESS!)
+  const pnl = state.unrealizedPnl
+  const stale = existing.filter(isUnrealised)
+
+  console.log(`\nunrealised pnl ${pnl.toFixed(2)} across ${state.openPerpPositions} open position(s)`)
+  if (stale.length) console.log(`  replacing ${stale.length} previous mark(s)`)
+  if (!COMMIT) return
+
+  if (stale.length) {
+    await api('/api/v1/activities/bulk', { creates: [], updates: [], deleteIds: stale.map((r) => r.id) })
+  }
+  if (Math.abs(pnl) < 0.005) return
+
+  const row = {
+    accountId,
+    date: new Date().toISOString(),
+    activityType: pnl > 0 ? 'CREDIT' : 'FEE',
+    quantity: 1,
+    unitPrice: 1,
+    amount: Math.abs(pnl),
+    currency: 'USD',
+    comment: UNREALISED_COMMENT,
+    lineNumber: 1,
+  }
+  const check = await wf.tool<any>('prepare_activity_import', { activities: [row] })
+  const ok = (check.rows ?? [])[0]
+  if (ok && ok.isValid !== false && ok.isDuplicate !== true) {
+    await wf.tool('commit_activity_import', { activities: [row] })
+    console.log('  booked the current mark')
+  } else {
+    console.log(`  ! mark refused: ${JSON.stringify(ok)}`)
+  }
+}
 
 if (!COMMIT) {
+  await syncUnrealised()
   console.log('\nDRY RUN — set SPARK_COMMIT=1 to import')
-  console.log(JSON.stringify(plan.slice(0, 5), null, 1))
   process.exit(0)
 }
 
 let imported = 0
-for (let i = 0; i < plan.length; i += 100) {
-  const slice = plan.slice(i, i + 100).map((r, n) => ({
+for (let i = 0; i < finalPlan.length; i += 100) {
+  const slice = finalPlan.slice(i, i + 100).map((r, n) => ({
     accountId,
     date: r.date,
     activityType: r.activityType,
@@ -217,13 +319,12 @@ for (let i = 0; i < plan.length; i += 100) {
   }))
   const check = await wf.tool<any>('prepare_activity_import', { activities: slice })
   const ok = (check.rows ?? []).map((r: any) => r.isValid !== false && r.isDuplicate !== true)
-  const flagged = slice.filter((_, n) => !ok[n])
-  if (flagged.length) {
-    console.log(`batch ${i / 100 + 1}: flagged (not committed):`)
-    for (const f of flagged) console.log(`  ${f.date} ${f.activityType} ${f.comment}`)
+  for (const [n, row] of slice.entries()) {
+    if (!ok[n]) console.log(`  ! refused ${row.date} ${row.activityType} ${row.comment}`)
   }
   const toCommit = slice.filter((_, n) => ok[n])
   if (toCommit.length) { await wf.tool('commit_activity_import', { activities: toCommit }); imported += toCommit.length }
-  console.log(`batch ${i / 100 + 1}: committed ${toCommit.length}/${slice.length}`)
 }
-console.log(`\nIMPORTED ${imported} of ${plan.length}`)
+console.log(`\nIMPORTED ${imported} of ${finalPlan.length}`)
+
+await syncUnrealised()

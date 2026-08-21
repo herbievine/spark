@@ -123,11 +123,13 @@ export async function buildReport(opts: {
           `+ ${state.openOrderCount} open orders ${state.openBidNotional.toFixed(2)} + perp margin ${state.perpMargin.toFixed(2)}`,
       )
       if (state.openPerpPositions > 0) {
-        // Only realised PnL is booked, so this is expected drift rather than a
-        // missing activity — named so it is not chased every run.
-        alerts.push(
-          `${account.name}: ${state.openPerpPositions} open perp position(s) carrying ${state.unrealizedPnl.toFixed(2)} ` +
-            `unrealised PnL, which Wealthfolio does not book — expect roughly that much cash drift until it closes`,
+        // import-hyperliquid.ts books this as one row it rewrites each sync, so
+        // the residual drift is only however far the mark has moved since — a
+        // note rather than an alert, and not something to chase.
+        notes.push(
+          `${account.name}: ${state.openPerpPositions} open perp position(s) carrying ` +
+            `${state.unrealizedPnl.toFixed(2)} unrealised PnL. Booked as a single row refreshed on each ` +
+            `sync, so cash drifts only by what the mark has moved since the last one`,
         )
       }
     } else {
